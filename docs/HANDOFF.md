@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block A → B)
+# PNCHD — Session Hand-off (Phase 2, Block B)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -18,8 +18,18 @@ for every decision below.
 - `pnchd-prod` — created, not yet linked or touched. Don't push here until
   Section 12.3 (Supabase Production checklist) in the architecture doc.
 
-## What's done — Phase 2, Block A (database schema)
-Migrations `001`–`008` in `supabase/migrations/`, all pushed to `pnchd-dev`:
+## What's done — Phase 2, Block A (database schema) — COMPLETE
+All 11 migrations live in `supabase/migrations/` (timestamp-prefixed,
+e.g. `20260808164940_organizations_profiles.sql`), pushed to `pnchd-dev` and
+confirmed via `supabase migration list` (local == remote). Committed and
+pushed to `origin/main` at `3b74da4`.
+
+Note: migrations 001–008 were built and initially committed sitting at the
+repo root with plain `001_`–`008_` numeric names, not inside
+`supabase/migrations/` — meaning nothing had actually reached `pnchd-dev`
+despite this doc previously claiming otherwise. Caught and fixed this
+session: all files renamed to proper timestamp-prefixed names and moved
+into `supabase/migrations/`, then pushed for real.
 
 | File | Tables | Notes |
 |---|---|---|
@@ -31,6 +41,9 @@ Migrations `001`–`008` in `supabase/migrations/`, all pushed to `pnchd-dev`:
 | 006 | invoices | Client can only move `status` from `sent` → `approved`, enforced by trigger. Payment/`paid` status is webhook-only |
 | 007 | line_items | Polymorphic (`parent_type`/`parent_id`) — no real FK possible, so a trigger validates the parent row exists |
 | 008 | documents, document_signers | Signer can only set `signed_at` once, enforced by trigger, auto-flips `status` to `signed` |
+| 009 | vehicles, vehicle_locations | Fleet module. `vehicle_locations` RLS ANDs `has_active_module('fleet_tracking')` into each policy directly (not a standalone policy — separate permissive policies OR together in Postgres RLS, which would've defeated the gating) |
+| 010 | notifications | Scoped to `recipient_id = auth.uid()`, not org-wide like every other table — Section 7.2 gives owner/pro no special read access here. Inserts are Edge-Function-only via service role, same as `module_subscriptions` |
+| 011 | vehicles index | Follow-up: added `idx_vehicles_organization_id`. Section 6 listed no index for `vehicles` at all (every other table gets one); flagged instead of guessing, added on explicit call once you confirmed it |
 
 ### Conventions established — follow these for new tables
 - Every table: `alter table X enable row level security;`
@@ -62,22 +75,25 @@ Neither was in scope to silently fix — surfacing them here instead of
 guessing at schema additions that weren't spec'd.
 
 ## What's next
-**Finish Block A** — three tables remain from Section 5.1, all simpler than
-what's done (no polymorphism, no client-write triggers):
-- `vehicles` (fleet module)
-- `vehicle_locations` (fleet module — append-only, driver inserts, dashboard
-  reads via Realtime)
-- `notifications`
+**Block B — Supabase client setup in both apps.** In progress.
 
-Follow the same conventions as 001–008 above. `vehicle_locations` needs the
-module-gating RLS pattern from Section 7.3 — use `has_active_module('fleet_tracking')`
-from migration 002 rather than re-writing the EXISTS subquery.
+- `pnchd-mobile` and `pnchd-web` are cloned locally at
+  `/Users/jgrether/Dev/PNCHD/pnchd-mobile` and `/Users/jgrether/Dev/PNCHD/pnchd-web`.
+  Both are empty except a placeholder `README.md` — no Flutter project, no
+  React project, no Supabase client wiring yet. Starting from scratch in
+  both.
+- Flutter: `core/supabase/` per the Section 9.1 folder structure — Supabase
+  client singleton, initialized with `SUPABASE_URL`/`SUPABASE_ANON_KEY` via
+  `--dart-define` (Section 11.3).
+- React: `@supabase/supabase-js` client using `VITE_SUPABASE_URL`/
+  `VITE_SUPABASE_ANON_KEY` (Section 11.1).
+- Both point at `pnchd-dev` (`jzmcgxugmeaebvxcrkjn`) for now.
 
-**After that** — Block B–D: Supabase client setup in both apps, Flutter
-folder scaffolding per Section 9.1, React page scaffolding per Section 10.2.
-Then Phase 2's remaining piece: Stripe Edge Functions (Section 8.2/8.3) —
-webhook handlers for `customer.subscription.updated` and
-`payment_intent.succeeded`, plus the Docuseal webhook (Section 8.1).
+**After that** — rest of Block B–D: Flutter folder scaffolding per Section
+9.1, React page scaffolding per Section 10.2. Then Phase 2's remaining
+piece: Stripe Edge Functions (Section 8.2/8.3) — webhook handlers for
+`customer.subscription.updated` and `payment_intent.succeeded`, plus the
+Docuseal webhook (Section 8.1).
 
 ## How I like to work
 Decision-already-made, execute-only-that, move-on. I don't need elaborate
