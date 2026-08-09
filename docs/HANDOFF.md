@@ -75,19 +75,39 @@ Neither was in scope to silently fix — surfacing them here instead of
 guessing at schema additions that weren't spec'd.
 
 ## What's next
-**Block B — Supabase client setup in both apps.** In progress.
+**Block B — Supabase client setup in both apps.** In progress, paused mid-way.
 
-- `pnchd-mobile` and `pnchd-web` are cloned locally at
-  `/Users/jgrether/Dev/PNCHD/pnchd-mobile` and `/Users/jgrether/Dev/PNCHD/pnchd-web`.
-  Both are empty except a placeholder `README.md` — no Flutter project, no
-  React project, no Supabase client wiring yet. Starting from scratch in
-  both.
-- Flutter: `core/supabase/` per the Section 9.1 folder structure — Supabase
-  client singleton, initialized with `SUPABASE_URL`/`SUPABASE_ANON_KEY` via
-  `--dart-define` (Section 11.3).
-- React: `@supabase/supabase-js` client using `VITE_SUPABASE_URL`/
+`pnchd-mobile` — DONE, committed and pushed (`5a8e89f`):
+- `flutter create --org io.pnchd --project-name pnchd_mobile --platforms ios,android .`
+- `supabase_flutter` added. `lib/core/supabase/supabase_client.dart` per the
+  Section 9.1 folder structure — initializes from `SUPABASE_URL`/
+  `SUPABASE_ANON_KEY` via `--dart-define` (Section 11.3). Uses the current
+  `publishableKey` param, not the deprecated `anonKey` one, but kept the env
+  var name matching the doc's Section 11.3 naming.
+- `main.dart` replaced the counter demo with a placeholder screen showing
+  the Supabase client connected. `test/widget_test.dart` updated to match,
+  using `EmptyLocalStorage` so the test doesn't need platform plugins.
+- `flutter analyze` clean.
+
+`pnchd-web` — IN PROGRESS, NOT committed, NOT pushed. Left mid-edit:
+- Scaffolded via `npm create vite@latest . -- --template react-ts --overwrite`,
+  `npm install` done.
+- `tailwindcss` + `@tailwindcss/vite` installed but **not yet wired in** —
+  `vite.config.ts` still just has the React plugin, `src/index.css` still
+  has Vite's demo styling, no `@import "tailwindcss";` added yet.
+- Deleted the Vite demo assets (`src/assets/`, `src/App.css`,
+  `public/icons.svg`, `public/vite.svg`) intending to replace `src/App.tsx`
+  with a minimal placeholder (mirroring the mobile side), **but `App.tsx`
+  still imports the deleted files — the app will not build right now.**
+- Not started yet: `@supabase/supabase-js` install, `src/lib/supabase.ts`
+  client, `.env.local`/`.env.example` for `VITE_SUPABASE_URL`/
   `VITE_SUPABASE_ANON_KEY` (Section 11.1).
-- Both point at `pnchd-dev` (`jzmcgxugmeaebvxcrkjn`) for now.
+- **Next session, start here:** rewrite `src/App.tsx` to drop the deleted
+  imports (or restore them), finish the Tailwind wiring, then pick back up
+  at the Supabase client install.
+- Anon/publishable key for `pnchd-dev` already fetched this session via
+  `supabase projects api-keys --project-ref jzmcgxugmeaebvxcrkjn` if needed
+  again — publishable key starts `sb_publishable_Sgf-Mjng...`.
 
 **After that** — rest of Block B–D: Flutter folder scaffolding per Section
 9.1, React page scaffolding per Section 10.2. Then Phase 2's remaining
