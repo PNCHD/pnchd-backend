@@ -13,6 +13,19 @@ for every decision below.
 - `pnchd-mobile` — Flutter app (Pro contractor app + Client/Driver app).
 - `pnchd-web` — React + TypeScript + Tailwind web dashboard and landing page.
 
+## Product requirements
+- **`pnchd-mobile` must support phone and tablet on both iOS and Android** —
+  not just install/run, but adapt its layout to the larger canvas. Native
+  project config already permits this on both platforms (iOS:
+  `TARGETED_DEVICE_FAMILY = "1,2"` plus `UISupportedInterfaceOrientations~ipad`
+  in `Info.plist`, both set by `flutter create` already; Android: no
+  `<supports-screens>` restriction or `resizeableActivity="false"`, so
+  nothing to change there either). What's NOT done yet: no screen exists
+  yet to actually be responsive. Standing convention once `features/`
+  screens get built (Section 9.1): use `LayoutBuilder`/breakpoints rather
+  than fixed phone-width assumptions, same way the web dashboard should
+  already be responsive by nature of being a browser app.
+
 ## Supabase projects
 - `pnchd-dev` — linked to this repo's CLI, all migrations pushed here so far.
 - `pnchd-prod` — created, not yet linked or touched. Don't push here until
@@ -75,9 +88,9 @@ Neither was in scope to silently fix — surfacing them here instead of
 guessing at schema additions that weren't spec'd.
 
 ## What's next
-**Block B — Supabase client setup in both apps.** In progress, paused mid-way.
+**Block B — Supabase client setup in both apps — COMPLETE.**
 
-`pnchd-mobile` — DONE, committed and pushed (`5a8e89f`):
+`pnchd-mobile` — committed and pushed (`5a8e89f`, theming follow-up `daca3c3`):
 - `flutter create --org io.pnchd --project-name pnchd_mobile --platforms ios,android .`
 - `supabase_flutter` added. `lib/core/supabase/supabase_client.dart` per the
   Section 9.1 folder structure — initializes from `SUPABASE_URL`/
@@ -87,33 +100,47 @@ guessing at schema additions that weren't spec'd.
 - `main.dart` replaced the counter demo with a placeholder screen showing
   the Supabase client connected. `test/widget_test.dart` updated to match,
   using `EmptyLocalStorage` so the test doesn't need platform plugins.
-- `flutter analyze` clean.
+- `flutter analyze` clean. Placeholder screen themed with Section 1.2 brand
+  colors (navy/red/light-gray) — explicitly a placeholder, expect a real
+  theming pass later.
 
-`pnchd-web` — IN PROGRESS, NOT committed, NOT pushed. Left mid-edit:
-- Scaffolded via `npm create vite@latest . -- --template react-ts --overwrite`,
-  `npm install` done.
-- `tailwindcss` + `@tailwindcss/vite` installed but **not yet wired in** —
-  `vite.config.ts` still just has the React plugin, `src/index.css` still
-  has Vite's demo styling, no `@import "tailwindcss";` added yet.
-- Deleted the Vite demo assets (`src/assets/`, `src/App.css`,
-  `public/icons.svg`, `public/vite.svg`) intending to replace `src/App.tsx`
-  with a minimal placeholder (mirroring the mobile side), **but `App.tsx`
-  still imports the deleted files — the app will not build right now.**
-- Not started yet: `@supabase/supabase-js` install, `src/lib/supabase.ts`
-  client, `.env.local`/`.env.example` for `VITE_SUPABASE_URL`/
-  `VITE_SUPABASE_ANON_KEY` (Section 11.1).
-- **Next session, start here:** rewrite `src/App.tsx` to drop the deleted
-  imports (or restore them), finish the Tailwind wiring, then pick back up
-  at the Supabase client install.
-- Anon/publishable key for `pnchd-dev` already fetched this session via
+`pnchd-web` — committed and pushed (`3e6b058`, theming follow-up `8bf3dc2`):
+- Scaffolded via `npm create vite@latest . -- --template react-ts --overwrite`.
+- Tailwind v4 wired in via the `@tailwindcss/vite` plugin (v4's model: no
+  `tailwind.config.js`/PostCSS, just the Vite plugin plus
+  `@import "tailwindcss";` in `src/index.css`). Brand colors registered as
+  named tokens via Tailwind v4's CSS-based `@theme` block (`--color-navy`,
+  `--color-brand-red`, `--color-app-bg`), same placeholder-only caveat as
+  mobile.
+- `@supabase/supabase-js` added. `src/lib/supabase.ts` reads
+  `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` from `.env.local` (gitignored
+  via the default Vite `*.local` pattern; `.env.example` documents the shape,
+  committed) per Section 11.1.
+  Worth knowing: `createClient()`'s defaults persist the session
+  (access + refresh token) in browser `localStorage` and silently
+  auto-refresh the access token on a timer while the tab is open —
+  `persistSession`/`autoRefreshToken` both default `true`. That's why a
+  logged-in session survives a page reload with no extra code. It also means
+  the token sits in `localStorage`, not an httpOnly cookie — acceptable here
+  specifically because RLS is the real security boundary (Section 7), so a
+  leaked token only grants what that user's own RLS policies already allow.
+- `tsc -b && vite build` clean.
+- Anon/publishable key for `pnchd-dev` fetched via
   `supabase projects api-keys --project-ref jzmcgxugmeaebvxcrkjn` if needed
   again — publishable key starts `sb_publishable_Sgf-Mjng...`.
 
-**After that** — rest of Block B–D: Flutter folder scaffolding per Section
+**Next** — rest of Block B–D: Flutter folder scaffolding per Section
 9.1, React page scaffolding per Section 10.2. Then Phase 2's remaining
 piece: Stripe Edge Functions (Section 8.2/8.3) — webhook handlers for
 `customer.subscription.updated` and `payment_intent.succeeded`, plus the
 Docuseal webhook (Section 8.1).
+
+**Decision logged this session, not yet acted on:** Section 10.2's page
+list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
+modules and has a Flutter feature folder (Section 9.1) but no web
+counterpart as written. Confirmed: web should get scheduling too. Add a
+`/scheduling` route when React page scaffolding actually happens — no rush
+now.
 
 ## How I like to work
 Decision-already-made, execute-only-that, move-on. I don't need elaborate
