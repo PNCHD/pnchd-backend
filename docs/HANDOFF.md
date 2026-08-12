@@ -3,15 +3,67 @@
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
 Flutter mobile, React web dashboard, Supabase backend. Full architecture,
-pricing model, schema, and RLS strategy live in `docs/ARCHITECTURE.md` in
+pricing model, schema, and RLS strategy live in `docs/ARCHITECTURE.docx` in
 this repo (pnchd-backend). Read that file first — it's the source of truth
 for every decision below.
 
+Note: several tables and decisions added after that doc was written are
+recorded only here (see the migration table and Block C sections below).
+Fold them into `ARCHITECTURE.docx` next time it's edited.
+
 ## Repo layout
-- `pnchd-backend` — this repo. `docs/ARCHITECTURE.md`, `supabase/migrations/`,
-  and (later) Edge Functions live here.
+- `pnchd-backend` — this repo. `docs/ARCHITECTURE.docx`,
+  `supabase/migrations/`, and (later) Edge Functions live here.
 - `pnchd-mobile` — Flutter app (Pro contractor app + Client/Driver app).
 - `pnchd-web` — React + TypeScript + Tailwind web dashboard and landing page.
+
+## Engineering standards — read before writing any code
+These are non-negotiable and apply to `pnchd-mobile` and `pnchd-web`
+equally. The goal: if this software is ever sold, the buyer's dev team
+should inherit a clean, scalable codebase and be productive immediately.
+No technical debt is accepted as a tradeoff for shipping faster.
+
+**Layering / decoupling**
+- Data access lives in a dedicated repository layer. Never call
+  `supabase.from(...)` (or `@supabase/supabase-js` equivalents) inline from
+  a state provider, hook, widget, or component.
+- Reference implementation: `pnchd-mobile/lib/core/data/*_repository.dart`,
+  with Riverpod providers depending on repositories. Mirror this in
+  `pnchd-web` — a repository/data module wrapping Supabase, not calls
+  scattered through React components.
+- Repositories take an injectable client (defaulting to the shared
+  singleton) so they can be constructed with a fake in tests.
+
+**Shared / injectable libraries**
+- Styling and theming live in one centralized, swappable place
+  (`core/theme/app_theme.dart` on mobile; the Tailwind `@theme` token block
+  on web). Never hardcode brand colors per-screen.
+- Shared UI (page shells, buttons, cards, empty/error states) gets
+  extracted into a reusable component library. Rule of thumb: if 2+ screens
+  repeat the same structural boilerplate, extract it rather than
+  copy-pasting. Reference: `core/widgets/placeholder_screen.dart`.
+
+**Testing**
+- Write tests as the code lands, not in a deferred "testing pass."
+  Untested logic counts as technical debt.
+- Structure code to be testable. When meaningful logic is entangled with
+  framework objects, extract it into a pure function. Reference:
+  `core/router/redirect_logic.dart` — role-based routing pulled out of the
+  GoRouter wiring into `resolveRedirect(profile, path)`, unit tested
+  without needing a router or widget tree.
+
+**Comments**
+- Only where they earn their place, and concise. Skip comments that
+  restate the code. Keep the ones carrying what code can't: why a
+  non-obvious approach was chosen, a subtle framework behavior that would
+  otherwise read as a bug, architecture-doc section references, and
+  deliberately flagged gaps.
+
+**Applying this**
+- All of the above is part of the definition of done for every piece of
+  work — including scaffolding, since scaffolding decisions calcify once
+  real features build on top of them. It should not require a review pass
+  or a prompt to get there.
 
 ## Product requirements
 - **`pnchd-mobile` must support phone and tablet on both iOS and Android** —
@@ -206,17 +258,6 @@ still queued — see "What's next" below.
   rule going forward: if 2+ screens repeat the same structural boilerplate,
   extract it instead of leaving it copy-pasted.
 - `flutter analyze` clean, 12/12 tests passing.
-
-### Standing architecture bar (both platforms, no exceptions)
-You said explicitly: build this like a buyer's dev team will inherit it —
-no technical debt, on mobile and web equally. Concretely: data access
-always goes through a repository layer (never `supabase.from(...)` inline
-in a provider/component), styling/theming stays centralized and swappable,
-shared UI gets extracted into reusable components rather than duplicated,
-and this bar applies at scaffolding time, not deferred to a later cleanup
-pass. The repository layer + shared widget extraction above are the
-reference examples — carry the same pattern into `pnchd-web` when its
-scaffolding happens.
 
 **What's next** — React page scaffolding per Section 10.2 (including the
 `/scheduling` route decision below), matching the repository-layer pattern
