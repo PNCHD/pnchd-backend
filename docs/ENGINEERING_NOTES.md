@@ -100,7 +100,53 @@ The RLS policy gates *who may attempt* the update; the trigger gates *what they 
 change*. Both are needed. This is why `proposals`, `invoices`, and
 `document_signers` all have enforcement triggers.
 
-### 1.5 The trust boundary
+### 1.5 GRANT and RLS are two separate gates — we shipped 14 migrations missing one
+
+**This was a real bug, and it made every table in the project unreachable.**
+
+A PostgREST request has to pass **two independent checks**:
+
+1. **SQL table privileges** (`GRANT SELECT ON x TO authenticated`) — does this role
+   have any right to touch this table at all?
+2. **Row Level Security policies** — which rows within it?
+
+Migrations 001–014 diligently did #2 and never did #1. Every table had RLS enabled
+with carefully written policies, and every request failed before RLS was ever
+consulted:
+
+```
+42501  permission denied for table profiles
+hint:  Grant the required privileges to the current role with:
+       GRANT SELECT ON public.profiles TO service_role;
+```
+
+Supabase normally papers over this with `ALTER DEFAULT PRIVILEGES` for tables
+created by the `postgres` role, so hand-written migrations usually "just work." The
+role `supabase db push` connects as didn't inherit those defaults, so nothing was
+granted and nothing complained — DDL succeeded, policies were created, `supabase
+migration list` showed everything applied.
+
+**Why nobody noticed for four migrations' worth of work:** neither app had ever
+issued an authenticated query. The Flutter and React clients were only ever
+*constructed*, never used to fetch. Connectivity was "verified" by reading
+`supabase.rest.url`, which is a local string, not a round trip. A build passing and
+a client initializing prove nothing about whether the database will answer.
+
+The fix (`20260811192313_grant_table_privileges.sql`) grants on existing objects
+*and* sets default privileges so future tables aren't dead on arrival.
+
+**Why granting `all` to `anon` is not a security hole:** this is the standard
+Supabase model. Table privileges are deliberately broad; RLS is the enforcement
+layer. A table with RLS enabled and no matching policy denies by default no matter
+what it's granted. `webhook_events` is the exception — grants were explicitly
+revoked from `anon`/`authenticated` as defense in depth, so that a policy added by
+mistake later still can't expose operational plumbing.
+
+**Generalizable lesson:** verify against the real thing. `supabase db push`
+succeeding means the DDL ran, not that the API works. One `curl` against PostgREST
+with a real key would have caught this on day one.
+
+### 1.6 The trust boundary
 
 - **Anon / publishable key** — ships in the mobile binary and the web bundle. Safe,
   because it grants nothing on its own; RLS decides everything.
@@ -111,7 +157,7 @@ This is why tables written exclusively by trusted server code
 (`module_subscriptions`, `notifications`, `webhook_events`) have **no** client INSERT
 policy at all. There's no gap to police — the only writer bypasses RLS by design.
 
-### 1.6 Why `has_active_module()` is `SECURITY DEFINER`
+### 1.7 Why `has_active_module()` is `SECURITY DEFINER`
 
 The helper reads `module_subscriptions`. If it ran as the calling user
 (`SECURITY INVOKER`), it would itself be subject to that table's RLS — and the RLS
