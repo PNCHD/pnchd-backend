@@ -364,6 +364,16 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# Inbound webhook endpoints. verify_jwt MUST stay false: Supabase Edge Functions
+# require a Supabase JWT by default and third-party providers have none, so every
+# delivery would 401. Signature verification inside each function is what
+# authenticates these endpoints instead — see ARCHITECTURE.md Section 8.5.
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.docuseal-webhook]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

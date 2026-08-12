@@ -267,12 +267,54 @@ still queued — see "What's next" below.
   extract it instead of leaving it copy-pasted.
 - `flutter analyze` clean, 12/12 tests passing.
 
-**What's next** — React page scaffolding per Section 10.2 (including the
-`/scheduling` route decision below), matching the repository-layer pattern
-established on mobile. Then Phase 2's remaining piece: Stripe Edge
-Functions (Section 8.2/8.3) — webhook handlers for
-`customer.subscription.updated` and `payment_intent.succeeded`, plus the
-Docuseal webhook (Section 8.1).
+## Block D — Edge Functions (Sections 8.1/8.2/8.3/8.5)
+
+**Critical bug found and fixed first.** Migrations 001–014 enabled RLS and
+wrote policies but never granted SQL table privileges. GRANT and RLS are
+independent gates that must both pass, so **every table was unreachable by
+every role**, service_role included — verified against dev, PostgREST
+returned `42501 permission denied for table profiles`. This survived four
+migrations' worth of work because neither client had ever issued a real
+query; they were only ever constructed. Fixed in
+`20260811192313_grant_table_privileges.sql`, which also sets default
+privileges so future tables aren't dead on arrival. Full write-up in
+`ENGINEERING_NOTES.md` §1.5.
+
+**Built:**
+- `webhook_events` ledger + `claim/complete/fail_webhook_event()`
+  (`20260811192107`). The claim is a single atomic upsert, not
+  SELECT-then-INSERT, so concurrent deliveries can't both proceed; a
+  staleness window prevents a crashed run from stranding an event as
+  permanently-skipped. State machine verified against dev, 5/5 cases.
+- `supabase/functions/_shared/` — env accessor, service-role client,
+  webhook response helpers (named for retry semantics, not status codes),
+  idempotency wrapper, HMAC verification with constant-time compare, and
+  the pure `subscription-state` / `docuseal-events` logic.
+- `stripe-webhook` — `constructEventAsync` signature verification on the
+  raw body, then `customer.subscription.updated` (module + seat reconcile,
+  founding-member guard) and `payment_intent.succeeded` (invoice paid +
+  notification).
+- `docuseal-webhook` — HMAC verification, signer status update, document
+  status rolled up from all signers.
+- `config.toml`: `verify_jwt = false` for both webhook functions.
+
+**The founding-member guard is load-bearing, not defensive.** Founding
+members have no per-module subscription items (flat rate), so a naive
+snapshot-reconcile computes an empty desired set and deactivates every
+module they were promised for life — on any subscription update at all.
+Handler skips module reconciliation for them entirely. `ENGINEERING_NOTES.md` §6.6.
+
+**Not deployed yet.** Functions are written but not pushed to
+`pnchd-dev` — deployment needs the Section 11.2 secrets set
+(`supabase secrets set STRIPE_SECRET_KEY=... STRIPE_WEBHOOK_SECRET=...
+DOCUSEAL_WEBHOOK_SECRET=...`) and Stripe/Docuseal dashboard endpoints
+configured. Also needs Stripe Price metadata (`module_key` per module
+price, `line_type=seats` on the seats price) — that's the join key the
+reconcile depends on and it doesn't exist in Stripe yet.
+
+**What's next** — deploy + configure the above, then React page scaffolding
+per Section 10.2 (including the `/scheduling` route decision below),
+matching the repository-layer pattern established on mobile.
 
 **Decision logged this session, not yet acted on:** Section 10.2's page
 list is missing a `/scheduling` route — `scheduling` is one of the 4 launch

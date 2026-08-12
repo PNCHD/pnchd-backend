@@ -573,6 +573,18 @@ schema. Each needs a decision.
    exist (`*_pending_*`), but nothing inserts those rows or sends an FCM push when
    a document/invoice/proposal is assigned to a client. Only Docuseal's own email
    exists today. Needs a trigger or Edge Function firing on assignment.
+5. **Section 2.5's module-removal code doesn't match the Stripe API.**
+   `cancel_at_period_end` is a property of a *Subscription*, not a
+   `SubscriptionItem` — the snippet in 2.5 would not compile against the current
+   API, and cancelling the subscription is not what's wanted. Removing one module
+   at period end needs a Subscription Schedule or app-side deletion at rollover.
+   Does not affect the inbound webhook (which reconciles from the item list
+   regardless), but blocks the outbound "remove a module" flow.
+6. **`documents.status` has no `declined` value.** Migration 008 allows
+   `draft | sent | completed | voided`. A Docuseal decline currently maps to
+   `voided`, which loses the distinction between "contractor cancelled it" and
+   "client refused to sign." Fine if that distinction doesn't matter; needs an
+   enum value if it does.
 
 ---
 

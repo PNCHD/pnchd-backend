@@ -394,7 +394,58 @@ toward it (set exactly the modules present in the payload as active, deactivate 
 rest) rather than applying deltas. Combined with recording the event's `created`
 timestamp, a stale event can be detected and skipped.
 
-### 6.6 HTTP status codes are control signals
+### 6.6 The founding-member guard prevents a catastrophic bug, not a theoretical one
+
+Section 2.3 describes the Layer 3 webhook guard defensively — "if a pricing update
+accidentally targets a founding member subscription, the function refuses." Reading
+it as belt-and-braces undersells it badly.
+
+Founding members pay a **flat $39 rate with no per-module subscription items**
+(migration 002 even notes `stripe_subscription_item_id` is NULL for them). The
+sync handler reconciles module state from the subscription's items — treat the
+payload as full current state, deactivate anything not in it.
+
+Put those together for a founding member:
+
+1. Subscription has a base item, no module items
+2. `extractSubscriptionState` finds zero module keys
+3. `diffModules([], ['scheduling', 'document_signing', ...])` → deactivate **all**
+4. A customer promised all modules for life silently loses every one of them
+
+And it would fire on *any* `customer.subscription.updated` — a card update, an
+address change, a Stripe-side renewal. Not an edge case.
+
+So the guard skips module reconciliation entirely for founding members and syncs
+only `seat_count`. Their module access comes from the founding-member terms, not
+from subscription items, so there is nothing to reconcile against.
+
+**Generalizable lesson:** "reconcile toward the payload's full state" is the right
+pattern for out-of-order delivery (6.5) but it assumes the payload actually
+*represents* the full state. When a class of account is billed differently, that
+assumption breaks and the reconcile quietly destroys data. Check whether a
+snapshot-reconcile is valid for every account type it will run against.
+
+### 6.7 Stripe has no `cancel_at_period_end` on subscription items
+
+ARCHITECTURE.md Section 2.5 gives this as the module-removal implementation:
+
+```js
+await stripe.subscriptionItems.update(subscriptionItemId, {
+  cancel_at_period_end: true,
+});
+```
+
+**That field does not exist on `SubscriptionItem`.** `cancel_at_period_end` is a
+property of the *Subscription*, which cancels the whole thing — not one module.
+Removing a single item at period end requires either a Subscription Schedule, or
+application-side logic that deletes the item when the period rolls over.
+
+This doesn't affect the webhook handler — reconciling from the item list is correct
+either way, since an item that goes away for any reason deactivates its module. But
+the outbound "remove a module" code, when it gets written, cannot be written the way
+the doc describes. Logged in Section 5.2 gaps.
+
+### 6.8 HTTP status codes are control signals
 
 The response code tells the provider what to do next:
 
