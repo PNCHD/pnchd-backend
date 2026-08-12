@@ -3,17 +3,25 @@
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
 Flutter mobile, React web dashboard, Supabase backend. Full architecture,
-pricing model, schema, and RLS strategy live in `docs/ARCHITECTURE.docx` in
+pricing model, schema, and RLS strategy live in **`docs/ARCHITECTURE.md`** in
 this repo (pnchd-backend). Read that file first — it's the source of truth
 for every decision below.
 
-Note: several tables and decisions added after that doc was written are
-recorded only here (see the migration table and Block C sections below).
-Fold them into `ARCHITECTURE.docx` next time it's edited.
+## Docs in this repo
+- **`docs/ARCHITECTURE.md`** — the source of truth. v3.0, markdown. Contains
+  everything from the original `.docx` plus every decision made since, with
+  additions marked `[Added v3.0]`. **Edit this file**, not the `.docx`.
+- `docs/ARCHITECTURE.docx` — superseded v2.0. Retained for reference only;
+  no longer authoritative and intentionally not maintained.
+- `docs/ENGINEERING_NOTES.md` — running explanation log. The *why* and the
+  gotchas behind the architecture: RLS policy composition, auth/session
+  mechanics, webhook correctness, framework-version traps, and bugs hit
+  along the way with their root causes.
+- `docs/HANDOFF.md` — this file. Session state, what's done, what's next.
 
 ## Repo layout
-- `pnchd-backend` — this repo. `docs/ARCHITECTURE.docx`,
-  `supabase/migrations/`, and (later) Edge Functions live here.
+- `pnchd-backend` — this repo. `docs/`, `supabase/migrations/`,
+  and `supabase/functions/` (Edge Functions) live here.
 - `pnchd-mobile` — Flutter app (Pro contractor app + Client/Driver app).
 - `pnchd-web` — React + TypeScript + Tailwind web dashboard and landing page.
 
