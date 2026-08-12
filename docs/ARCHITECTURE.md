@@ -936,6 +936,33 @@ rather than fixed phone-width assumptions.
 | `/settings/billing` | Module toggles, seat management, Stripe billing portal link |
 | `/settings/team` | Invite clients, drivers, and additional Pro seats |
 
+### 10.2.1 Folder Architecture **[Added v3.0]**
+
+```
+src/
+  lib/supabase.ts       # client singleton
+  data/                 # repository layer — the ONLY place supabase-js is called
+    index.ts            #   Repositories interface + factory
+    repositoryContext.ts, RepositoryProvider.tsx   # injection point
+    authRepository.ts, profileRepository.ts, moduleRepository.ts
+  auth/                 # useSession, useProfile, useActiveModules (TanStack Query)
+  routing/
+    access.ts           #   pure resolveAccess(profile, path) — no router types
+    navigation.ts       #   pure module-gated nav derivation
+    RequireAccess.tsx   #   guard component
+    AppRoutes.tsx
+  components/           # shared: AppLayout, PageShell, EmptyState, LoadingScreen
+  pages/                # one export per Section 10.2 route
+  types/                # shared domain types + row mappers
+  test/setup.ts
+```
+
+Repositories take an injectable Supabase client and are resolved from React
+context, never imported as singletons — so a test can supply fakes and never
+touch the network. `AuthRepository` exists specifically so the auth stream isn't
+reached through the global client, which would otherwise make the entire auth
+path untestable. The mobile app has the same seam via Riverpod providers.
+
 ### 10.3 Scope Clarification **[Added v3.0]**
 
 The web app is **not** a browser mirror of the whole mobile app. It is:

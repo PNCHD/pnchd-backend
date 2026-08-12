@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block C)
+# PNCHD — Session Hand-off (Phase 2, Block E)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -312,9 +312,40 @@ configured. Also needs Stripe Price metadata (`module_key` per module
 price, `line_type=seats` on the seats price) — that's the join key the
 reconcile depends on and it doesn't exist in Stripe yet.
 
-**What's next** — deploy + configure the above, then React page scaffolding
-per Section 10.2 (including the `/scheduling` route decision below),
-matching the repository-layer pattern established on mobile.
+## Block E — React page scaffolding (Section 10.2) — DONE
+`pnchd-web` committed and pushed (`5264ad1`); mobile follow-up `a1ca289`.
+
+- **Data layer** (`src/data/`): repositories with injectable Supabase clients,
+  surfaced through a `Repositories` interface and a React context. Nothing
+  outside `src/data/` calls supabase-js. Folder layout recorded in
+  ARCHITECTURE.md §10.2.1.
+- **`AuthRepository` added on both platforms.** Repositories were already
+  injectable, but the auth stream was still reached through the global
+  client on web (`useSession`) and mobile (`currentProfileProvider`),
+  leaving the whole auth path untestable. Now behind a seam on both.
+- **Routing**: pure `resolveAccess(profile, path)` with no React Router
+  types. Web rules differ from mobile per §10.3 — contractors and platform
+  admin only; clients/drivers get `/mobile-only` rather than being bounced
+  somewhere they also can't use. The guard renders a loading state while the
+  profile resolves instead of deciding on incomplete data (the mobile
+  redirect-stall trap).
+- **Module-gated nav** off `module_subscriptions`, mirroring
+  `ContractorShell`. All §10.2 routes plus `/scheduling` and the §15.3 admin
+  area. Shared `PageShell`/`EmptyState`/`LoadingScreen` + a placeholder page
+  factory so 18 routes aren't 18 near-identical files.
+- **29 tests** — access rules per role, module gating, and an integration
+  pass driving `RequireAccess` entirely through injected fakes. `npm run
+  verify` = lint + typecheck + tests. Mobile: 12 tests, `flutter analyze` clean.
+
+**What's next, in rough order:**
+1. **Deploy the Edge Functions** — blocked on secrets and provider config
+   (see Block D above). Needs your Stripe/Docuseal accounts.
+2. **Stripe Price metadata** — `module_key` on each module price,
+   `line_type=seats` on the seats price. The subscription reconcile depends
+   on this and it doesn't exist in Stripe yet.
+3. **Real auth flow** — `/login` and `/signup` are placeholders; nothing can
+   actually sign in yet on either platform.
+4. **Resolve the §5.2 schema gaps** — six logged, each needs a decision.
 
 **Decision logged this session, not yet acted on:** Section 10.2's page
 list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
