@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block B)
+# PNCHD — Session Hand-off (Phase 2, Block C)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -109,6 +109,19 @@ guessing at schema additions that weren't spec'd.
    flagging so it's not lost before Edge Functions get built (Section
    8.2/8.3/8.4 is still queued in "What's next" below).
 
+### Decisions confirmed this session
+- **`client_feature_toggles` stays org-wide, no per-client override.** One
+  set of switches per organization, applies to every client uniformly —
+  matches how `module_subscriptions` already works (org-level, not
+  per-user). Confirmed rather than assumed, since the schema as built
+  (no `client_profile_id` column) only supports this and not per-client
+  granularity. **You flagged wanting per-client override as a possible
+  future change** — not built now, but when it comes up: add a nullable
+  `client_profile_id` column (null row = org-wide default, a row with a
+  specific `client_profile_id` overrides just that client), and
+  `is_client_feature_enabled()` needs to check for a client-specific row
+  before falling back to the org-wide one.
+
 ## What's next
 **Block B — Supabase client setup in both apps — COMPLETE.**
 
@@ -151,9 +164,64 @@ guessing at schema additions that weren't spec'd.
   `supabase projects api-keys --project-ref jzmcgxugmeaebvxcrkjn` if needed
   again — publishable key starts `sb_publishable_Sgf-Mjng...`.
 
-**Next** — rest of Block B–D: Flutter folder scaffolding per Section
-9.1, React page scaffolding per Section 10.2. Then Phase 2's remaining
-piece: Stripe Edge Functions (Section 8.2/8.3) — webhook handlers for
+## Block C — Flutter folder scaffolding (Section 9.1) — DONE for pnchd-mobile
+Committed and pushed (`4c273fd`). React page scaffolding (Section 10.2)
+still queued — see "What's next" below.
+
+- `core/{auth,data,models,router,theme,supabase}` + `features/*` +
+  `features/settings/*` all built out. Riverpod (`flutter_riverpod`) +
+  GoRouter (`go_router`) added.
+- **Repository layer**: `core/data/{profile,module,client_feature}_repository.dart`
+  wrap all Supabase calls. Providers depend on repositories, not
+  `supabase.from(...)` directly — decouples fetch logic from state/UI,
+  makes it swappable/mockable. Established as the standing convention for
+  new data access going forward.
+- **Role-based routing**: `core/router/redirect_logic.dart` has a pure
+  `resolveRedirect(profile, path)` function (owner/pro → contractor shell,
+  client → `/client`, driver → `/driver`, signed out → `/onboarding`),
+  unit tested (`test/core/router/redirect_logic_test.dart`, 11 cases).
+  Pulled out of the GoRouter wiring specifically so it doesn't need a
+  GoRouterState/widget tree to test.
+- **Found and fixed a real race condition**: `refreshListenable` was
+  originally built from the raw Supabase auth stream directly, which fires
+  synchronously. `currentProfileProvider` does an async transform on top of
+  that same event (even the signed-out fast path costs a microtask, since
+  it's still an `async` function) — so the redirect re-check was firing
+  before the profile provider had actually finished updating, read stale
+  `AsyncLoading` state, and nothing ever triggered a second attempt. Fixed
+  by deriving `refreshListenable` from `ref.listen(currentProfileProvider, ...)`
+  instead of the raw stream — ties the refresh to the actual data changing,
+  not the upstream trigger.
+- **Module-gated bottom nav** (`core/router/contractor_shell.dart`): reads
+  `activeModulesProvider`, only shows tabs for active modules.
+  `dashboard`/`projects` are core and always visible. This is the concrete
+  mechanism behind "contractors add/remove modules and the app adapts."
+- Every `features/*` screen is a placeholder — `client_payments` and
+  `messaging` have screen files but aren't wired into any route yet
+  (`client_payments` needs `client_view` built out for real first;
+  `messaging` is a roadmap module).
+- **Shared component follow-up** (`83e42d3`): every placeholder screen was
+  independently rebuilding the same Scaffold/AppBar/centered-text
+  boilerplate — pulled into `core/widgets/placeholder_screen.dart`. Standing
+  rule going forward: if 2+ screens repeat the same structural boilerplate,
+  extract it instead of leaving it copy-pasted.
+- `flutter analyze` clean, 12/12 tests passing.
+
+### Standing architecture bar (both platforms, no exceptions)
+You said explicitly: build this like a buyer's dev team will inherit it —
+no technical debt, on mobile and web equally. Concretely: data access
+always goes through a repository layer (never `supabase.from(...)` inline
+in a provider/component), styling/theming stays centralized and swappable,
+shared UI gets extracted into reusable components rather than duplicated,
+and this bar applies at scaffolding time, not deferred to a later cleanup
+pass. The repository layer + shared widget extraction above are the
+reference examples — carry the same pattern into `pnchd-web` when its
+scaffolding happens.
+
+**What's next** — React page scaffolding per Section 10.2 (including the
+`/scheduling` route decision below), matching the repository-layer pattern
+established on mobile. Then Phase 2's remaining piece: Stripe Edge
+Functions (Section 8.2/8.3) — webhook handlers for
 `customer.subscription.updated` and `payment_intent.succeeded`, plus the
 Docuseal webhook (Section 8.1).
 
