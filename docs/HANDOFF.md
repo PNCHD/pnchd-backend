@@ -57,6 +57,8 @@ into `supabase/migrations/`, then pushed for real.
 | 009 | vehicles, vehicle_locations | Fleet module. `vehicle_locations` RLS ANDs `has_active_module('fleet_tracking')` into each policy directly (not a standalone policy — separate permissive policies OR together in Postgres RLS, which would've defeated the gating) |
 | 010 | notifications | Scoped to `recipient_id = auth.uid()`, not org-wide like every other table — Section 7.2 gives owner/pro no special read access here. Inserts are Edge-Function-only via service role, same as `module_subscriptions` |
 | 011 | vehicles index | Follow-up: added `idx_vehicles_organization_id`. Section 6 listed no index for `vehicles` at all (every other table gets one); flagged instead of guessing, added on explicit call once you confirmed it |
+| 012 | client_feature_toggles | New table, not in ARCHITECTURE.docx yet. Owner-controlled on/off switch for client-facing capabilities (pay invoices, sign docs, messaging), independent of `module_subscriptions.is_active` (billing). Mirrors `has_active_module()` with a new `is_client_feature_enabled()` function. Not yet wired into the existing invoices/documents client RLS policies — see Block C gaps below |
+| 013 | notifications type widening | Added `document_pending_signature`, `invoice_pending_payment`, `proposal_pending_approval` to the `type` check constraint — the original enum (010) only covered completion events, nothing for "something new landed in your queue" |
 
 ### Conventions established — follow these for new tables
 - Every table: `alter table X enable row level security;`
@@ -86,6 +88,26 @@ into `supabase/migrations/`, then pushed for real.
 
 Neither was in scope to silently fix — surfacing them here instead of
 guessing at schema additions that weren't spec'd.
+
+### Known gaps flagged during Block C (unresolved, need your call)
+1. **`client_feature_toggles` isn't enforced at the RLS level yet.** A
+   client can still approve/pay an invoice or sign a document via direct
+   table access today regardless of the toggle — it only controls what the
+   client app's UI chooses to show. Extending the existing client policies
+   on `invoices`/`documents` (migrations 006/008) to also require
+   `is_client_feature_enabled(...)` is real follow-up work, not done here.
+2. **No push notification on assignment, only on completion.** Docuseal
+   emails a client automatically when a document is assigned to them
+   (Section 8.1 step 4), and `notifications.type` now has the enum values
+   for pending-action rows (`document_pending_signature`,
+   `invoice_pending_payment`, `proposal_pending_approval`), but nothing
+   actually inserts those rows or sends an FCM push (Section 8.4) when a
+   document/invoice/proposal gets assigned to a client — only Docuseal's
+   own email exists today. The client-side to-do flow (in-app badge +
+   push, not just email) needs an Edge Function or trigger that fires on
+   assignment, not just on the existing completion webhooks. Not built —
+   flagging so it's not lost before Edge Functions get built (Section
+   8.2/8.3/8.4 is still queued in "What's next" below).
 
 ## What's next
 **Block B — Supabase client setup in both apps — COMPLETE.**
