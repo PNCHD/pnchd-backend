@@ -399,7 +399,22 @@ CHECK, wasn't). Fixed in `20260816002616`. Full write-up: ENGINEERING_NOTES.md
 Third bug this session caught by exercising the authenticated path. The RLS
 suite now walks the real signup flow (13 tests).
 
+**Mobile auth done too** (`3c835f8`) — same flow, plus deep-link config.
+`supabase_flutter` completes the callback itself through app_links and
+`detectSessionInUri`, so no URL parsing in app code. Scheme
+`io.pnchd.pnchd_mobile://login-callback` registered in `Info.plist`
+(CFBundleURLTypes) and `AndroidManifest` (BROWSABLE intent-filter), both
+validated. Sign-out is behind a confirmation dialog — with magic link,
+getting back in means waiting on an email.
+
+An unattached *client* on mobile goes to their own shell rather than org
+setup, since clients are invited by a contractor and never create an
+organization. 18 tests, analyze clean.
+
 ### Blocking before real users
+- **Register the mobile redirect URL** `io.pnchd.pnchd_mobile://login-callback`
+  in the Supabase Auth dashboard (Authentication → URL Configuration). Manual
+  step; magic links to the app will fail without it.
 - **Custom SMTP (Resend) in Supabase Auth.** With magic link, email IS the
   login path — Supabase's built-in sender is rate-limited to a handful per
   hour and not for production. No email means nobody can log in at all.
@@ -411,15 +426,13 @@ suite now walks the real signup flow (13 tests).
   record. Seam is in `OnboardingPage`.
 
 **What's next, in rough order:**
-1. **Mobile magic-link auth** — web is done; Flutter needs the same flow plus
-   deep-link handling (custom URL scheme, native config both platforms).
-2. **Deploy the Edge Functions** — blocked on secrets and provider config
+1. **Deploy the Edge Functions** — blocked on secrets and provider config
    (see Block D above). Needs your Stripe/Docuseal accounts.
-3. **Stripe Price metadata** — `module_key` on each module price,
+2. **Stripe Price metadata** — `module_key` on each module price,
    `line_type=seats` on the seats price. The subscription reconcile depends
    on this and it doesn't exist in Stripe yet.
-4. **Real screens** — every `features/*` and page is still a placeholder.
-5. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
+3. **Real screens** — every `features/*` and page is still a placeholder.
+4. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
 
 **Decision logged this session, not yet acted on:** Section 10.2's page
 list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
