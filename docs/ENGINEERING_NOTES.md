@@ -146,7 +146,76 @@ mistake later still can't expose operational plumbing.
 succeeding means the DDL ran, not that the API works. One `curl` against PostgREST
 with a real key would have caught this on day one.
 
-### 1.6 The trust boundary
+### 1.6 RLS policies that read `profiles` recurse — 42P17, and it broke everything
+
+Second total-outage bug, same blind spot as §1.5.
+
+The `profiles` SELECT policy resolved the user's org with an inline subquery:
+
+```sql
+create policy "profiles_read_within_org" on profiles for select
+  using (organization_id = (select organization_id from profiles where id = auth.uid()));
+```
+
+That subquery reads `profiles`, which is itself subject to this policy, which
+runs the subquery again. Postgres detects the cycle and aborts:
+
+```
+42P17  infinite recursion detected in policy for relation "profiles"
+```
+
+And because **every** table's policy resolved org and role the same way, the
+recursion propagated to all of them. No authenticated user could read any row
+from any table in the project.
+
+**The fix** is a `SECURITY DEFINER` helper — running as the function owner, it
+bypasses RLS for that one lookup, breaking the cycle:
+
+```sql
+create function current_user_organization_id() returns uuid
+language sql stable security definer set search_path = public
+as $$ select organization_id from profiles where id = auth.uid() $$;
+```
+
+`has_active_module()` was already written this way, which is exactly why it kept
+working while everything around it failed — a useful tell in hindsight.
+
+Note `set search_path = public` is not optional on a `SECURITY DEFINER`
+function: without it a caller can put a malicious `profiles` in a schema earlier
+in their search path and have it execute with the owner's privileges.
+
+**Why it hid for so long:** identical to the missing GRANTs. Every check ran as
+`service_role`, which bypasses RLS. `db push` succeeded, `migration list`
+matched, 73 tests passed, both apps built — all green, while the database would
+not answer a single authenticated query. It surfaced the moment a test signed in
+as a real client for the first time.
+
+### 1.7 The lesson both outages share, and what actually closes it
+
+Two bugs, months of work apart, both capable of taking down the entire product,
+both invisible to every check in place. The common cause is not carelessness:
+
+> **`service_role` bypasses RLS and table grants. Verifying with it proves
+> nothing about what real users can do.**
+
+Being more careful does not fix this — neither bug was a lapse in care, and no
+amount of re-reading the migrations would have surfaced either. What fixes it is
+exercising the real path:
+
+- **`supabase/tests/rls.test.ts`** seeds real auth users of every role across two
+  organizations, signs in as each, and asserts what they can and cannot read and
+  write. The first test is a bare "can this user read their own profile" — the
+  canary for §1.6.
+- **`scripts/check-policies.sh`** catches the shapes statically: inline
+  `profiles` subqueries, tables missing `enable row level security`, and gates
+  written as standalone policies (§1.2).
+- **`scripts/verify.sh`** runs both.
+
+A migration is not done when `db push` succeeds. It is done when the RLS suite
+passes. Both of these bugs would have been caught on the day they were written
+by a single authenticated `SELECT`.
+
+### 1.8 The trust boundary
 
 - **Anon / publishable key** — ships in the mobile binary and the web bundle. Safe,
   because it grants nothing on its own; RLS decides everything.
@@ -157,7 +226,7 @@ This is why tables written exclusively by trusted server code
 (`module_subscriptions`, `notifications`, `webhook_events`) have **no** client INSERT
 policy at all. There's no gap to police — the only writer bypasses RLS by design.
 
-### 1.7 Why `has_active_module()` is `SECURITY DEFINER`
+### 1.9 Why `has_active_module()` is `SECURITY DEFINER`
 
 The helper reads `module_subscriptions`. If it ran as the calling user
 (`SECURITY INVOKER`), it would itself be subject to that table's RLS — and the RLS

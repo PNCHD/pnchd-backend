@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block E)
+# PNCHD — Session Hand-off (Phase 2, Block F)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -336,6 +336,42 @@ reconcile depends on and it doesn't exist in Stripe yet.
 - **29 tests** — access rules per role, module gating, and an integration
   pass driving `RequireAccess` entirely through injected fakes. `npm run
   verify` = lint + typecheck + tests. Mobile: 12 tests, `flutter analyze` clean.
+
+## Block F — schema gap decisions + two critical RLS fixes
+
+**Your decisions (ARCHITECTURE.md §5.2, all resolved):**
+- No proposal rejection path — clients just don't approve, handled by conversation.
+- Client document visibility stays signer-only.
+- No `declined` document status — decline maps to `voided`.
+- `client_feature_toggles` enforced in RLS, **hard block**, no grandfathering.
+
+Three of four needed no schema change. Built: toggle enforcement
+(`20260816000233`) and pending-action notification triggers
+(`20260816000256`).
+
+**CRITICAL: RLS infinite recursion (42P17) — fixed in `20260816000734`.**
+Every policy resolved the user's org/role with an inline subquery on
+`profiles`. On `profiles` itself that recurses through its own policy, and
+because every table's policy reads `profiles`, the failure cascaded — **no
+authenticated user could read any row from any table**. Fixed with
+`SECURITY DEFINER` helpers (`current_user_organization_id()`,
+`current_user_role()`, `current_user_is_admin()`,
+`current_user_is_contractor()`) and all policies rewritten to use them.
+
+This is the second total-outage bug with the same root cause as the missing
+GRANTs: everything was verified with `service_role`, which bypasses RLS and
+grants. Both were invisible to a fully green test suite.
+
+**New verification infrastructure — this is what closes that class of bug:**
+- `supabase/tests/rls.test.ts` — seeds real auth users of all five roles
+  across two orgs, signs in as each, asserts reachability. 11 tests. First
+  test is the recursion canary.
+- `scripts/check-policies.sh` — static checks (inline `profiles` subqueries,
+  missing RLS, standalone gate policies). Validated against planted bugs.
+- `scripts/verify.sh [--with-rls]` — runs everything.
+
+**A schema change is done when `./scripts/verify.sh --with-rls` passes, not
+when `db push` succeeds.**
 
 **What's next, in rough order:**
 1. **Deploy the Edge Functions** — blocked on secrets and provider config

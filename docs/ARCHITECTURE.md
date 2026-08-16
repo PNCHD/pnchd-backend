@@ -553,38 +553,50 @@ back to the org-wide one.
 #### webhook_events **[Added v3.0]**
 Idempotency ledger for inbound third-party webhooks. See Section 8.5.
 
-### 5.2 Known Schema Gaps **[Added v3.0]**
+### 5.2 Schema Gaps — Resolved **[Added v3.0]**
 
-Surfaced during implementation, deliberately not "fixed" by guessing at unspec'd
-schema. Each needs a decision.
+Surfaced during implementation and deliberately not "fixed" by guessing. All
+have now been decided.
 
-1. **Proposals have no rejection path.** Schema has `approved_at` but no
-   `rejected_at`. Client approval works; client rejection has no column to write to.
-2. **Client document visibility is signer-only.** A client can only see a `document`
-   if they appear in `document_signers` for it — there's no `client_id` on
-   `documents` itself, so they can't browse "all documents on my project" before
-   being added as a signer.
-3. **`client_feature_toggles` is not enforced in RLS.** A client can still
-   approve/pay an invoice or sign a document via direct table access regardless of
-   the toggle — it currently only controls what the client app's UI shows.
-   Extending the client policies on `invoices`/`documents` to also require
-   `is_client_feature_enabled(...)` is outstanding work.
-4. **No notification/push on assignment, only on completion.** The enum values now
-   exist (`*_pending_*`), but nothing inserts those rows or sends an FCM push when
-   a document/invoice/proposal is assigned to a client. Only Docuseal's own email
-   exists today. Needs a trigger or Edge Function firing on assignment.
+1. **Proposals have no rejection path — RESOLVED, no change.** Decided: clients
+   do not reject in-app. A client who doesn't want to proceed simply doesn't
+   approve, and handles it with the contractor directly. No `rejected_at`
+   column. Proposal approval is correspondingly not gated by any
+   `client_feature_toggles` key.
+2. **Client document visibility is signer-only — RESOLVED, no change.** Decided:
+   keep it signer-only. A client sees a document once they are a signer on it,
+   not before. No `client_id` on `documents`.
+3. **`client_feature_toggles` not enforced in RLS — RESOLVED, enforced.**
+   Migration `20260816000233`. Decided: **hard block, no grandfathering** — a
+   client with a document already sent to them cannot finish signing once the
+   owner disables the feature. Enforcement is on writes only; read policies are
+   untouched so history and audit trails don't vanish. `paid` is unaffected
+   either way, since only the `payment_intent.succeeded` Edge Function can set
+   it (service role, bypasses RLS).
+4. **No notification on assignment — RESOLVED for in-app; push still pending.**
+   Migration `20260816000256` adds triggers writing
+   `invoice_pending_payment`, `proposal_pending_approval`, and
+   `document_pending_signature` rows when an item is sent to a client.
+   Implemented as triggers rather than Edge Function code so the notification
+   fires whichever path sends the item. Invoice and document notifications are
+   guarded on the matching `client_feature_toggles` key — there's no point
+   handing a client a to-do they're hard-blocked from doing. **Still
+   outstanding:** actual FCM push delivery (Section 8.4), blocked on Firebase
+   setup and the v1 API, not on schema.
+6. **`documents.status` has no `declined` value — RESOLVED, no change.**
+   Decided: no `declined` status. A Docuseal decline maps to `voided`; if there
+   is a problem the client and contractor sort it out directly.
+
+**Still open (not a schema decision):**
+
 5. **Section 2.5's module-removal code doesn't match the Stripe API.**
    `cancel_at_period_end` is a property of a *Subscription*, not a
-   `SubscriptionItem` — the snippet in 2.5 would not compile against the current
-   API, and cancelling the subscription is not what's wanted. Removing one module
-   at period end needs a Subscription Schedule or app-side deletion at rollover.
-   Does not affect the inbound webhook (which reconciles from the item list
-   regardless), but blocks the outbound "remove a module" flow.
-6. **`documents.status` has no `declined` value.** Migration 008 allows
-   `draft | sent | completed | voided`. A Docuseal decline currently maps to
-   `voided`, which loses the distinction between "contractor cancelled it" and
-   "client refused to sign." Fine if that distinction doesn't matter; needs an
-   enum value if it does.
+   `SubscriptionItem` — the snippet in 2.5 will not compile against the current
+   API, and cancelling the subscription is not what's wanted. Removing one
+   module at period end needs a Subscription Schedule or app-side deletion at
+   rollover. Does not affect the inbound webhook (which reconciles from the item
+   list regardless), but blocks the outbound "remove a module" flow when it gets
+   built.
 
 ---
 
@@ -683,7 +695,18 @@ CREATE FUNCTION has_active_module(check_module_key text) RETURNS boolean ...
 
 Follow these for every new table:
 
+- **Never resolve the current user with an inline subquery on `profiles`.** Use
+  the `SECURITY DEFINER` helpers from migration `20260816000734`:
+  `current_user_organization_id()`, `current_user_role()`,
+  `current_user_is_admin()`, `current_user_is_contractor()`. An inline
+  `(SELECT ... FROM profiles WHERE id = auth.uid())` inside a policy recurses
+  through `profiles`' own policy and aborts with 42P17 — and because every
+  table's policy reads `profiles`, that failure cascades to the entire
+  database. This took the whole project down once; see ENGINEERING_NOTES.md §1.6.
 - `ALTER TABLE X ENABLE ROW LEVEL SECURITY;` — always.
+- **Grants are separate from policies.** Default privileges are set (migration
+  `20260811192313`) so new tables inherit them, but confirm — a table with
+  perfect policies and no `GRANT` denies everyone. See ENGINEERING_NOTES.md §1.5.
 - Every table gets an `admin_bypass_X` policy (`role = 'platform_admin'`) so the
   Section 15.3 admin dashboard works without special-casing. This one *is* correct
   as a standalone policy — unconditional bypass is exactly the OR semantics wanted.
@@ -1131,6 +1154,18 @@ Section 8.1."
 - [ ] **[v3.0]** Data access goes through the repository layer, not inline in providers/components
 - [ ] **[v3.0]** Meaningful logic has unit tests, and is structured to be testable
 - [ ] **[v3.0]** Module-gating checks are ANDed into policies, not standalone policies
+
+**[v3.0] Schema changes are not done when `supabase db push` succeeds.** They are
+done when `./scripts/verify.sh --with-rls` passes. `db push` proves the DDL
+parsed; it says nothing about whether a real user can read a row. Two separate
+total-outage bugs (missing GRANTs, RLS recursion) shipped green past every other
+check because everything was verified with `service_role`, which bypasses both
+RLS and table privileges. See ENGINEERING_NOTES.md §1.7.
+
+- `./scripts/check-policies.sh` — static checks for inline `profiles`
+  subqueries, tables missing RLS, and standalone gate policies
+- `supabase/tests/rls.test.ts` — seeds real auth users of every role across two
+  orgs, signs in as each, asserts what they can and cannot reach
 
 ---
 
