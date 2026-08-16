@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block F)
+# PNCHD — Session Hand-off (Phase 2, Block G)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -373,15 +373,53 @@ grants. Both were invisible to a fully green test suite.
 **A schema change is done when `./scripts/verify.sh --with-rls` passes, not
 when `db push` succeeds.**
 
+## Block G — magic-link auth (web) + a third RLS bug
+
+Web committed (`4f63ac7`); backend fix pushed alongside.
+
+- **Magic link chosen over password.** Login and signup are the same call
+  (`signInWithOtp` + `shouldCreateUser`). No password reset flow to build.
+- **Org setup** at `/welcome`: `handle_new_user` leaves `organization_id`
+  NULL, so a new contractor names their business, which creates the org and
+  attaches the profile. `resolveAccess` gained an org-setup state, tested
+  across every role.
+- **Sign out** clears the query cache so the next user can't briefly see the
+  previous one's data.
+
+**BUG FOUND — signup was impossible.** The `organizations` SELECT policy only
+allowed `id = current_user_organization_id()`, which resolves through
+`profiles.organization_id` — still NULL during signup, the very column signup
+populates. A new owner couldn't read back the org they'd just created.
+Compounded by a misleading error: `INSERT ... RETURNING` applies SELECT
+policies, and PostgREST issues a RETURNING on every `.select()`, so it
+surfaced as "new row violates row-level security policy" (reads like WITH
+CHECK, wasn't). Fixed in `20260816002616`. Full write-up: ENGINEERING_NOTES.md
+§1.7.
+
+Third bug this session caught by exercising the authenticated path. The RLS
+suite now walks the real signup flow (13 tests).
+
+### Blocking before real users
+- **Custom SMTP (Resend) in Supabase Auth.** With magic link, email IS the
+  login path — Supabase's built-in sender is rate-limited to a handful per
+  hour and not for production. No email means nobody can log in at all.
+- **Org creation is not atomic** (two writes, ordering forced by RLS). Fails
+  toward "user unattached, can retry" — the safe direction — but wants a
+  SECURITY DEFINER function doing both in one transaction before launch.
+- **No Stripe subscription on signup.** Section 10.2 says signup starts the
+  30-day trial; without keys a new contractor gets an org and no subscription
+  record. Seam is in `OnboardingPage`.
+
 **What's next, in rough order:**
-1. **Deploy the Edge Functions** — blocked on secrets and provider config
+1. **Mobile magic-link auth** — web is done; Flutter needs the same flow plus
+   deep-link handling (custom URL scheme, native config both platforms).
+2. **Deploy the Edge Functions** — blocked on secrets and provider config
    (see Block D above). Needs your Stripe/Docuseal accounts.
-2. **Stripe Price metadata** — `module_key` on each module price,
+3. **Stripe Price metadata** — `module_key` on each module price,
    `line_type=seats` on the seats price. The subscription reconcile depends
    on this and it doesn't exist in Stripe yet.
-3. **Real auth flow** — `/login` and `/signup` are placeholders; nothing can
-   actually sign in yet on either platform.
-4. **Resolve the §5.2 schema gaps** — six logged, each needs a decision.
+4. **Real screens** — every `features/*` and page is still a placeholder.
+5. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
 
 **Decision logged this session, not yet acted on:** Section 10.2's page
 list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
