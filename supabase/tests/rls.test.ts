@@ -1,6 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
 
-import { admin, readable, seed, type Fixture } from "./fixtures.ts";
+import {
+  admin,
+  readable,
+  seed,
+  seedUnattachedUser,
+  type Fixture,
+} from "./fixtures.ts";
 
 /**
  * Access-control assertions run as real signed-in users. See fixtures.ts for
@@ -230,6 +236,74 @@ Deno.test("webhook_events is unreachable by any authenticated role", async () =>
       count === 0 || errorCode !== null,
       `${label} could read webhook_events`,
     );
+  }
+});
+
+Deno.test("signup: a new user starts unattached, then can create their own org", async () => {
+  const { user, cleanup } = await seedUnattachedUser(fixture.runId);
+
+  try {
+    // The handle_new_user trigger creates the profile with organization_id NULL.
+    // The web app keys its org-setup routing off exactly this.
+    const { data: initial, error: readError } = await user.client
+      .from("profiles")
+      .select("id, role, organization_id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    assertEquals(readError?.code ?? null, null, readError?.message ?? "");
+    assertEquals(initial?.organization_id, null, "new profile should have no org");
+    assertEquals(initial?.role, "owner");
+
+    // Step 1 of OrganizationRepository.createForOwner — the insert policy on
+    // organizations requires owner_id = auth.uid(), so this is the only shape
+    // that works.
+    const { data: org, error: orgError } = await user.client
+      .from("organizations")
+      .insert({ name: "Signup Test Co", owner_id: user.id })
+      .select("id")
+      .single();
+
+    assertEquals(orgError?.code ?? null, null, orgError?.message ?? "");
+    assert(org?.id, "org was not created");
+
+    // Step 2 — attach the profile.
+    const { error: attachError } = await user.client
+      .from("profiles")
+      .update({ organization_id: org!.id })
+      .eq("id", user.id);
+
+    assertEquals(attachError?.code ?? null, null, attachError?.message ?? "");
+
+    const { data: attached } = await user.client
+      .from("profiles")
+      .select("organization_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    assertEquals(attached?.organization_id, org!.id, "profile not attached to org");
+
+    // And the new org is isolated from everyone else's data.
+    const { data: visibleOrgs } = await user.client.from("organizations").select("id");
+    assertEquals(visibleOrgs?.length, 1, "new owner can see other organizations");
+    assertEquals(visibleOrgs?.[0].id, org!.id);
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("signup: a user cannot create an organization owned by someone else", async () => {
+  const { user, cleanup } = await seedUnattachedUser(`${fixture.runId}b`);
+
+  try {
+    const { error } = await user.client
+      .from("organizations")
+      .insert({ name: "Hijack Co", owner_id: fixture.orgA.users.owner.id })
+      .select("id")
+      .single();
+
+    assert(error !== null, "was able to create an org owned by another user");
+  } finally {
+    await cleanup();
   }
 });
 

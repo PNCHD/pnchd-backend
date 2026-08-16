@@ -190,9 +190,52 @@ matched, 73 tests passed, both apps built — all green, while the database woul
 not answer a single authenticated query. It surfaced the moment a test signed in
 as a real client for the first time.
 
-### 1.7 The lesson both outages share, and what actually closes it
+### 1.7 `INSERT ... RETURNING` applies the SELECT policy — with a misleading error
 
-Two bugs, months of work apart, both capable of taking down the entire product,
+Third bug found the same way, and the error message actively points the wrong
+direction.
+
+Signup creates an organization and reads back its id to attach the profile:
+
+```ts
+.from('organizations').insert({ name, owner_id: userId }).select('id').single()
+```
+
+That failed for every new user with:
+
+```
+42501  new row violates row-level security policy for table "organizations"
+```
+
+Which reads as a `WITH CHECK` failure. It wasn't — the same insert **without**
+`.select()` succeeded and wrote the row.
+
+Postgres applies **SELECT** policies to rows returned by `INSERT ... RETURNING`,
+and PostgREST issues a RETURNING whenever you call `.select()`. The SELECT policy
+was `id = current_user_organization_id()`, which resolves through
+`profiles.organization_id` — still NULL during signup, because that's the column
+signup exists to populate. So: you cannot read back the organization you need in
+order to attach yourself to it.
+
+The fix adds ownership as an independent path, which doesn't depend on profile
+attachment and so breaks the cycle:
+
+```sql
+using (owner_id = auth.uid() or id = current_user_organization_id())
+```
+
+Two things worth carrying forward:
+
+- **A write policy passing is not enough if the caller reads the row back.**
+  Any insert whose result you need must satisfy the SELECT policy too.
+- **Watch for circular dependencies in policies.** Whenever a policy resolves
+  identity through a column that some flow is responsible for *setting*, that
+  flow is the one that will break. Bootstrap paths — signup, invites, the first
+  row of anything — are where this bites.
+
+### 1.8 The lesson these outages share, and what actually closes it
+
+Three bugs, all found the same way, the first two capable of taking down the entire product,
 both invisible to every check in place. The common cause is not carelessness:
 
 > **`service_role` bypasses RLS and table grants. Verifying with it proves
@@ -215,7 +258,7 @@ A migration is not done when `db push` succeeds. It is done when the RLS suite
 passes. Both of these bugs would have been caught on the day they were written
 by a single authenticated `SELECT`.
 
-### 1.8 The trust boundary
+### 1.9 The trust boundary
 
 - **Anon / publishable key** — ships in the mobile binary and the web bundle. Safe,
   because it grants nothing on its own; RLS decides everything.
@@ -226,7 +269,7 @@ This is why tables written exclusively by trusted server code
 (`module_subscriptions`, `notifications`, `webhook_events`) have **no** client INSERT
 policy at all. There's no gap to police — the only writer bypasses RLS by design.
 
-### 1.9 Why `has_active_module()` is `SECURITY DEFINER`
+### 1.10 Why `has_active_module()` is `SECURITY DEFINER`
 
 The helper reads `module_subscriptions`. If it ran as the calling user
 (`SECURITY INVOKER`), it would itself be subject to that table's RLS — and the RLS

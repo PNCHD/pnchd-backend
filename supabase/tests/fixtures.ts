@@ -161,6 +161,51 @@ export async function seed(): Promise<Fixture> {
   return { runId, orgA, orgB, cleanup };
 }
 
+/**
+ * A signed-in user with NO organization — the state handle_new_user leaves a
+ * profile in between clicking the magic link and finishing setup. Used to
+ * exercise the real signup path under RLS.
+ */
+export async function seedUnattachedUser(
+  runId: string,
+): Promise<{ user: SeededUser; cleanup: () => Promise<void> }> {
+  const email = `rls-${runId}-unattached@example.test`;
+
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: PASSWORD,
+    email_confirm: true,
+    user_metadata: { role: "owner", full_name: "Unattached Owner" },
+  });
+  if (error || !data.user) throw new Error(`createUser failed: ${error?.message}`);
+
+  const client = createClient(SUPABASE_URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error: signInError } = await client.auth.signInWithPassword({
+    email,
+    password: PASSWORD,
+  });
+  if (signInError) throw new Error(`signIn failed: ${signInError.message}`);
+
+  const user: SeededUser = { id: data.user.id, email, role: "owner", client };
+
+  const cleanup = async () => {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("organization_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    await admin.from("profiles").delete().eq("id", user.id);
+    if (profile?.organization_id) {
+      await admin.from("organizations").delete().eq("id", profile.organization_id);
+    }
+    await admin.auth.admin.deleteUser(user.id);
+  };
+
+  return { user, cleanup };
+}
+
 /** Rows visible to this client, or the PostgREST error code if denied. */
 export async function readable(
   client: SupabaseClient,
