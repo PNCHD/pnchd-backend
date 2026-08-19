@@ -307,6 +307,77 @@ Deno.test("signup: a user cannot create an organization owned by someone else", 
   }
 });
 
+Deno.test("projects: a contractor can create one in their own org", async () => {
+  const owner = fixture.orgA.users.owner;
+
+  const { data, error } = await owner.client
+    .from("projects")
+    .insert({
+      organization_id: fixture.orgA.id,
+      created_by: owner.id,
+      title: "Created by owner",
+      status: "draft",
+    })
+    .select("id, organization_id, status")
+    .single();
+
+  assertEquals(error?.code ?? null, null, error?.message ?? "");
+  assertEquals(data?.organization_id, fixture.orgA.id);
+  assertEquals(data?.status, "draft");
+});
+
+Deno.test("projects: a contractor cannot create one in another org", async () => {
+  const { error } = await fixture.orgA.users.owner.client
+    .from("projects")
+    .insert({
+      organization_id: fixture.orgB.id,
+      created_by: fixture.orgA.users.owner.id,
+      title: "Cross-org write attempt",
+    })
+    .select("id")
+    .single();
+
+  assert(error !== null, "wrote a project into another organization");
+});
+
+Deno.test("projects: a client cannot create one at all", async () => {
+  // Section 7.2 gives clients read-only access to their own projects.
+  const { error } = await fixture.orgA.users.client.client
+    .from("projects")
+    .insert({
+      organization_id: fixture.orgA.id,
+      created_by: fixture.orgA.users.client.id,
+      title: "Client write attempt",
+    })
+    .select("id")
+    .single();
+
+  assert(error !== null, "client was able to create a project");
+});
+
+Deno.test("projects: fetching another org's project by id returns nothing", async () => {
+  const { data: foreign } = await admin
+    .from("projects")
+    .insert({
+      organization_id: fixture.orgB.id,
+      created_by: fixture.orgB.users.owner.id,
+      title: "Org B private",
+    })
+    .select("id")
+    .single();
+
+  // Null rather than an error: the app cannot distinguish "does not exist"
+  // from "not yours", which is what stops it leaking that the row exists.
+  const { data, error } = await fixture.orgA.users.owner.client
+    .from("projects")
+    .select("id")
+    .eq("id", foreign!.id)
+    .maybeSingle();
+
+  assertEquals(error?.code ?? null, null);
+  assertEquals(data, null, "read a project belonging to another organization");
+});
+
 Deno.test("teardown", async () => {
   await fixture.cleanup();
 });
