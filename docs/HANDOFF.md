@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block G)
+# PNCHD — Session Hand-off (Phase 2, Block H)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -425,13 +425,56 @@ organization. 18 tests, analyze clean.
   30-day trial; without keys a new contractor gets an org and no subscription
   record. Seam is in `OnboardingPage`.
 
+## Block H — the projects feature (first real screens)
+
+Web `d9b89b9`, mobile `8097f0e`, backend tests pushed alongside.
+
+- List with status filter chips (defaults to Open, hiding
+  completed/archived), create form, and detail with status switching. Both
+  platforms.
+- **Generated database types on web** (`src/types/database.types.ts`), with
+  the Supabase client typed against them. Makes a column rename a compile
+  error. **Regenerate after every migration:**
+  `supabase gen types typescript --project-id jzmcgxugmeaebvxcrkjn > pnchd-web/src/types/database.types.ts`
+  Gotcha: the `.select()` string must be a single literal — supabase-js parses
+  it at the type level, and concatenation widens it to `string` and silently
+  drops row typing.
+- Repositories deliberately **do not** filter by `organization_id`. RLS scopes
+  the query; filtering in the app would imply isolation lives there.
+- Project detail treats "not found" and "not yours" identically, because RLS
+  returns null for both. Distinguishing them would leak that the row exists.
+- Filtering is a pure module (web) / derived provider (mobile), tested
+  separately rather than inlined in the view.
+- **Riverpod 3.x**: `StateProvider` is removed (use a `Notifier`), and
+  `AsyncValue.valueOrNull` is now `.value`. Most tutorials show both.
+
+Counts: web 44, mobile 30, RLS 17, Edge Functions 32.
+
+### Demo data
+`supabase/../scratchpad/seed_demo.ts` (not committed) seeds
+`demo@pnchd.test` / "Ridgeline Construction" with 6 projects and 3 active
+modules, and prints a working magic link. Re-running wipes and recreates it.
+Worth moving into the repo as a proper seed script.
+
+### Design not yet reviewed
+Screens were shown but theme decisions were deferred. Everything is
+centralized (`@theme` tokens, `StatusBadge`/`StatusChip`, `PageShell`,
+`AuthScaffold`) so restyling is a small diff. Status colours are generic
+semantic green/amber and do not use the brand palette yet — the most obvious
+thing to revisit.
+
+### Flagged, not addressed
+Web bundle is 497 kB (143 kB gzipped) in a single chunk with no route
+splitting. Fine now; wants `React.lazy` on routes before launch.
+
 **What's next, in rough order:**
 1. **Deploy the Edge Functions** — blocked on secrets and provider config
    (see Block D above). Needs your Stripe/Docuseal accounts.
 2. **Stripe Price metadata** — `module_key` on each module price,
    `line_type=seats` on the seats price. The subscription reconcile depends
    on this and it doesn't exist in Stripe yet.
-3. **Real screens** — every `features/*` and page is still a placeholder.
+3. **More real screens** — projects is done; proposals, invoices, documents,
+   scheduling, and both client/driver shells are still placeholders.
 4. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
 
 **Decision logged this session, not yet acted on:** Section 10.2's page
