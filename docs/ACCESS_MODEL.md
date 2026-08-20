@@ -1,8 +1,8 @@
 # PNCHD — Access Model (Proposal)
 
-**Status: proposal, not built.** Two decisions at the bottom are still open, and
-§5b lists seven relationships this model does not yet cover — one of them
-structural (subcontractors cannot bill general contractors).
+**Status: design settled, not built.** All access decisions are closed (§6).
+§5b lists seven relationships still to resolve during implementation — one of
+them structural (subcontractors cannot bill general contractors).
 
 **Decided so far:** collaboration is granted organization-to-organization, not
 to individuals (§4); and a person belongs to exactly one organization — no
@@ -614,49 +614,49 @@ will be felt.
 
 ---
 
-## 6. Open decisions
+## 6. Decisions (closed)
 
-**A. Does a one-off trade need an account?**
+**A. A one-off trade gets a real account.** No link-scoped access without
+signup. A link that grants access without a login is a second authentication
+path, and a second place to fail open. Client and field-staff accounts are free
+and unlimited, so this costs the contractor nothing.
 
-- *Real account* — they sign in, see the job, appear consistently everywhere.
-  Consistent identity, works with everything above unchanged.
-- *Link-scoped access without signup* — lower friction, but it means a
-  credential that is not a user, which is a second authentication path and a
-  second thing to get right. Given §2.1, a second auth path is a second place to
-  fail open.
+**B. A subcontractor sees their own trade scope by default, and the GC or PM can
+widen it per project.**
 
-Leaning strongly toward a real account. Client and driver accounts are already
-free and unlimited, so cost to the contractor is zero.
+Default (nothing configured):
 
-**B. Does a subcontractor see the whole project, or only their own scope?**
+- their own trade's scope of work, schedule, and punch items
+- documents they are required to sign
+- the homeowner's contact details — they need site access
+- **not** other trades' line items or pricing
+- **not** correspondence between the GC and the client
+- **not** anything financial beyond their own agreement
 
-The concrete question: can the electrician see the mason's line items and
-pricing?
+The GC or PM can grant more, deliberately, from the project's visibility panel
+(§5.3). Widening is always an act; nothing widens on its own.
 
-- *Whole project* — simpler and more collaborative, but exposes other trades'
-  pricing to competitors-in-adjacent-trades.
-- *Scoped* — the `trade` column above, with line items and documents tagged by
-  trade. More faithful to how the industry actually guards pricing, and more
-  defensible. Requires tagging work, and a decision about what an untagged item
-  means (recommend: visible only to the organization, never to collaborators).
+Implications:
 
-This one materially changes the model, which is why it is called out rather than
-assumed. Recommend scoped — a data model that lets one trade read another's
-margins will eventually cause a real commercial problem for a customer.
+- line items carry a `trade` tag; untagged means organization-only, never
+  visible to a collaborator
+- the visibility panel is the single surface where these grants are made and
+  reviewed, and it must state what each party can currently see in plain terms
+- default-deny is enforced in the database, not by the panel — the panel
+  reflects enforcement (§5.3)
 
 ---
 
 ## 7. Sequence
 
-1. Settle A and B.
-2. Write the adversarial RLS tests (§2.5) — they will fail.
-3. Add restrictive boundary policies to existing tables. No behaviour change for
+1. Write the adversarial RLS tests (§2.5) — they will fail.
+2. Add restrictive boundary policies to existing tables. No behaviour change for
    current roles; verify the suite stays green.
-4. Add `profile_permissions`; move money behind it. Seats lose default money
+3. Add `profile_permissions`; move money behind it. Seats lose default money
    access — a deliberate, breaking change.
-5. Add `project_collaborations` and collaborator policies.
-6. Column-level revokes on money columns.
-7. UI: invite a collaborator, grant billing, revoke both.
+4. Add `project_collaborations` and collaborator policies.
+5. Column-level revokes on money columns.
+6. UI: invite a collaborator, grant billing, revoke both.
 
 Steps 3 and 4 are worth doing regardless of the subcontractor feature. They
 close the "a seat can read every invoice" gap that exists today.
