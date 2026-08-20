@@ -17,6 +17,10 @@ for every decision below.
   gotchas behind the architecture: RLS policy composition, auth/session
   mechanics, webhook correctness, framework-version traps, and bugs hit
   along the way with their root causes.
+- `docs/ACCESS_MODEL.md` — **proposal, not built.** Subcontractor and
+  multi-organization access, the permission model for money, and the
+  security principles behind them (fail-closed, access-as-data, restrictive
+  policies, column-level grants). Two decisions open at the bottom.
 - `docs/HANDOFF.md` — this file. Session state, what's done, what's next.
 
 ## Repo layout

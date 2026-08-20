@@ -1,0 +1,275 @@
+# PNCHD — Access Model (Proposal)
+
+**Status: proposal, not built.** Supersedes nothing yet. Two decisions at the
+bottom are still open.
+
+The requirement driving this: **no data should ever be reachable by the wrong
+person.** Everything below is chosen for that first. Where a design is chosen
+over an alternative, the reason given is correctness or security — not effort.
+
+---
+
+## 1. What the current model cannot express
+
+`profiles` fuses two different things: *who someone is* and *which organization
+they belong to*. `profiles.organization_id` is a single column, so a human can
+belong to exactly one organization, permanently.
+
+That breaks on four real cases:
+
+1. **A subcontractor on someone else's job.** An electrician works a GC's
+   project for three weeks. He is not an employee of that GC.
+2. **A subcontractor who is themselves a PNCHD customer.** The plumber has his
+   own owner account and his own jobs. He should not need a second login to
+   appear on a GC's project.
+3. **A one-off trade.** On one job, once, never returns.
+4. **A person who owns more than one business.** A GC running two LLCs, or a
+   remodeling company plus a separate service outfit.
+
+Cases 1–3 are *the same shape*: someone outside the organization needs access to
+one job inside it. Case 4 is genuinely different and is treated separately.
+
+There is also a permissions gap independent of the above: `owner` and `pro` have
+**identical** database access today. A seat employee can read every invoice the
+company has issued. Restricting that is a policy change, not a UI change.
+
+---
+
+## 2. Principles
+
+These come directly from the bugs this project has already shipped and fixed.
+Each one is a rule that would have prevented a real incident.
+
+### 2.1 Fail closed, not open
+
+A control that must be *remembered* will eventually be forgotten. Prefer designs
+where the safe outcome is the default and access requires an explicit act.
+
+This is the single reason for the recommendation in §3.
+
+### 2.2 Access is data, not policy logic
+
+Every serious defect here came from conditional logic inside policies:
+recursion through a subquery, an `OR` that silently defeated a gate, a `for`
+branch that never executed. Complex boolean conditions are hard to read, hard to
+test, and fail quietly.
+
+Policies should be **lookups against explicit grant rows**:
+
+```sql
+exists (select 1 from project_access
+        where project_id = projects.id and profile_id = auth.uid())
+```
+
+The important property is not simplicity but **inspectability**. With logic-based
+policies you can only ask *"can this one person see this?"*, one person at a
+time. With grants as rows you can ask **"who can see this project?"** and get a
+list. That is the question that actually gets asked — during an audit, during an
+incident, or when a contractor asks whether the electrician saw their margins.
+
+### 2.3 Hard boundaries are RESTRICTIVE policies
+
+Permissive policies combine with `OR`. That is why a standalone module-gate
+policy gated nothing. Restrictive policies combine with `AND`, so **no future
+permissive policy can widen them by accident.**
+
+Invariants that must never fail get restrictive policies:
+
+- A row is never visible outside its organization unless an explicit grant says so.
+- Money is never visible without a billing permission.
+
+Permissive policies then grant within those bounds. A mistake in a permissive
+policy becomes an over-grant *inside* a hard boundary rather than a breach of it.
+
+### 2.4 Column-level privileges under RLS
+
+Postgres supports `GRANT SELECT (columns)`. Money columns should be revoked from
+roles that must not see them, so that even an incorrect row policy cannot leak a
+dollar figure. This sits *beneath* RLS, not beside it.
+
+### 2.5 Adversarial tests are written first
+
+Every bug found so far was found by testing the *denial* case, always after the
+fact. For this work the RLS suite gets the negative assertions **before** the
+policies exist: a collaborator must not see other projects, must not see money,
+must not see the org's other clients, must not see other collaborators.
+
+A permission check that never runs is indistinguishable from one that passes.
+
+---
+
+## 3. Recommendation: project-scoped collaboration
+
+**A subcontractor is granted access to a project, not membership in an
+organization.**
+
+`profiles.organization_id` stays as it is — one person, one home organization.
+Access to work elsewhere is a separate, explicit grant per project.
+
+### Why this and not multi-organization membership
+
+Not effort. Two reasons:
+
+**It is fail-closed.** If a sub were a member of the GC's organization, then
+"belongs to this org" is *true* for them, and every org-scoped policy in the
+system grants access by default. Every table would need to actively remember to
+exclude subs — including every table added in future. Under §2.1 that is the
+wrong shape.
+
+With collaboration, a sub is not a member, so every existing org-scoped policy
+already excludes them, permanently, with nobody remembering anything. New tables
+inherit safety rather than inheriting exposure.
+
+**It is true.** A plumber is not a member of the general contractor's company.
+He is on a job. A data model that says otherwise is lying, and models that lie
+produce features that surprise people.
+
+Note that generality is not a virtue here. The most general access model is
+"everyone can reach everything, with rules to restrict" — obviously wrong for a
+security boundary. Narrowness is the point.
+
+### What the plumber sees
+
+His project list is the union of his own organization's projects and the
+projects he has been granted. One login, one list, no switching. When the GC's
+job ends, the grant is revoked and it disappears — he does not have to do
+anything, and nothing of his is affected.
+
+---
+
+## 4. Proposed schema
+
+```sql
+-- Who may reach a project they do not own, and as what.
+create table project_access (
+  id                       uuid primary key default gen_random_uuid(),
+  project_id               uuid not null references projects(id) on delete cascade,
+  profile_id               uuid not null references profiles(id) on delete cascade,
+  granting_organization_id uuid not null references organizations(id),
+  access_level             text not null check (access_level in ('view', 'contribute')),
+  trade                    text,          -- see open decision B
+  invited_by               uuid not null references profiles(id),
+  invited_at               timestamptz not null default now(),
+  accepted_at              timestamptz,
+  revoked_at               timestamptz
+);
+
+create unique index on project_access (project_id, profile_id)
+  where revoked_at is null;
+```
+
+`revoked_at` rather than deletion: who had access to what, and when, is an audit
+question that outlives the grant.
+
+```sql
+-- What a member of an organization may do beyond the default for their role.
+create table profile_permissions (
+  id              uuid primary key default gen_random_uuid(),
+  profile_id      uuid not null references profiles(id) on delete cascade,
+  organization_id uuid not null references organizations(id) on delete cascade,
+  permission      text not null check (permission in ('billing')),
+  level           text not null check (level in ('read', 'write')),
+  granted_by      uuid not null references profiles(id),
+  granted_at      timestamptz not null default now(),
+  revoked_at      timestamptz
+);
+```
+
+A table rather than boolean columns because permissions multiply, and because
+`granted_by`/`granted_at` is the audit trail for the question "who let them see
+that."
+
+**Money becomes invisible to seats by default** and is granted deliberately —
+which is the behaviour described as wanted. `owner` always has it implicitly and
+needs no row.
+
+### Multi-business owners (case 4)
+
+Genuinely different and deliberately *not* solved by the above. One human owning
+several organizations wants to switch between them, with full authority in each.
+That is real membership, and it warrants an `organization_members` table plus an
+active-organization concept.
+
+It is separated because conflating "I own two companies" with "I'm working your
+job this month" is what made this feel intractable. Recommend deciding it on its
+own once subcontractor access is settled.
+
+---
+
+## 5. RLS shape
+
+Illustrative, not final.
+
+```sql
+-- Hard boundary. Nothing widens this.
+create policy "projects_boundary" on projects
+  as restrictive for all to authenticated
+  using (
+    organization_id = current_user_organization_id()
+    or exists (select 1 from project_access
+               where project_id = projects.id
+                 and profile_id = auth.uid()
+                 and accepted_at is not null
+                 and revoked_at is null)
+  );
+
+-- Grants operate only inside it.
+create policy "projects_org_contractors" on projects
+  for all to authenticated
+  using (organization_id = current_user_organization_id()
+         and current_user_is_contractor());
+```
+
+Money-bearing tables get a restrictive policy requiring either `owner`, or a
+`billing` permission row — so a collaborator can never reach an invoice
+regardless of any other policy, and neither can a seat without an explicit
+grant.
+
+---
+
+## 6. Open decisions
+
+**A. Does a one-off trade need an account?**
+
+- *Real account* — they sign in, see the job, appear consistently everywhere.
+  Consistent identity, works with everything above unchanged.
+- *Link-scoped access without signup* — lower friction, but it means a
+  credential that is not a user, which is a second authentication path and a
+  second thing to get right. Given §2.1, a second auth path is a second place to
+  fail open.
+
+Leaning strongly toward a real account. Client and driver accounts are already
+free and unlimited, so cost to the contractor is zero.
+
+**B. Does a subcontractor see the whole project, or only their own scope?**
+
+The concrete question: can the electrician see the mason's line items and
+pricing?
+
+- *Whole project* — simpler and more collaborative, but exposes other trades'
+  pricing to competitors-in-adjacent-trades.
+- *Scoped* — the `trade` column above, with line items and documents tagged by
+  trade. More faithful to how the industry actually guards pricing, and more
+  defensible. Requires tagging work, and a decision about what an untagged item
+  means (recommend: visible only to the organization, never to collaborators).
+
+This one materially changes the model, which is why it is called out rather than
+assumed. Recommend scoped — a data model that lets one trade read another's
+margins will eventually cause a real commercial problem for a customer.
+
+---
+
+## 7. Sequence
+
+1. Settle A and B.
+2. Write the adversarial RLS tests (§2.5) — they will fail.
+3. Add restrictive boundary policies to existing tables. No behaviour change for
+   current roles; verify the suite stays green.
+4. Add `profile_permissions`; move money behind it. Seats lose default money
+   access — a deliberate, breaking change.
+5. Add `project_access` and collaborator policies.
+6. Column-level revokes on money columns.
+7. UI: invite a collaborator, grant billing, revoke both.
+
+Steps 3 and 4 are worth doing regardless of the subcontractor feature. They
+close the "a seat can read every invoice" gap that exists today.
