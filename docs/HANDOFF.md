@@ -1,4 +1,4 @@
-# PNCHD — Session Hand-off (Phase 2, Block H)
+# PNCHD — Session Hand-off (Phase 2, Block I)
 
 ## What this is
 I'm building PNCHD ("Punched"), a modular contractor management SaaS —
@@ -466,6 +466,52 @@ thing to revisit.
 ### Flagged, not addressed
 Web bundle is 497 kB (143 kB gzipped) in a single chunk with no route
 splitting. Fine now; wants `React.lazy` on routes before launch.
+
+## Block I — proposals & invoices, and a security bug that failed OPEN
+
+Web `6943b88`, backend fix + tests pushed alongside. **Mobile not done yet.**
+
+### SECURITY: three enforcement triggers never fired
+The client-write triggers on `proposals` and `document_signers` declared a
+PL/pgSQL variable named `current_role` — a **reserved SQL keyword** that
+evaluates to the role name. The keyword wins over the variable, so
+`if current_role = 'client'` compared `'authenticated' = 'client'` and the
+whole enforcement body was dead code. No error, no warning.
+
+Verified as a real client before the fix: approved a proposal that was never
+sent, and **rewrote a $1,000.00 proposal to $0.01 while approving it**.
+
+The invoices copy was incidentally rewritten during the RLS recursion fix, the
+only reason it worked. Fixed in `20260819181016`.
+
+**This one failed OPEN** — unlike §1.5/§1.6 which broke loudly, the app worked
+perfectly with a security control silently absent. Only testing the
+*adversarial* case finds that. Six new RLS tests now assert the controls
+**deny**; a static check catches reserved-keyword variable names.
+Write-up: ENGINEERING_NOTES.md §1.7a.
+
+### Money handling
+`lib/money.ts` is the only place cents become decimals. `quantity` is
+`numeric(10,2)` so line totals involve decimal × integer in IEEE-754 — every
+product is rounded to an integer immediately rather than accumulated and
+rounded at the end, or the total stops matching the sum of visible rows. 32
+tests. `parseCurrencyToCents` rejects >2 decimal places rather than rounding.
+
+### Built
+Proposals/invoices lists, detail with shared line-item editor, live totals,
+send action. Records freeze once sent. `paid` is rejected client-side since
+only the payment webhook sets it.
+
+Counts: web 92, mobile 30, RLS 23, Edge Functions 32.
+
+### Not done
+- **Mobile proposals/invoices** — models, repositories, and screens.
+- Invoices have `tax_cents` but no `tax_rate_percent` column, so the web
+  editor can't compute invoice tax from a rate. Proposals can. Worth deciding
+  whether invoices need the rate column too.
+- `replaceLineItems` is delete-then-insert across three writes with no
+  transaction (PostgREST can't). Recoverable by saving again, but wants a
+  SECURITY DEFINER function.
 
 **What's next, in rough order:**
 1. **Deploy the Edge Functions** — blocked on secrets and provider config
