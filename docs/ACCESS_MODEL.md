@@ -223,16 +223,85 @@ that."
 which is the behaviour described as wanted. `owner` always has it implicitly and
 needs no row.
 
+### A seat at a subcontracting company
+
+Worth confirming, because it is the common case: a plumber who is a `pro` seat
+at Ace Plumbing, where Ace is subcontracted onto a GC's project.
+
+This needs nothing extra. The GC grants the project to **Ace Plumbing**, and the
+plumber sees it through his existing membership. He needs no organization of his
+own and no second login.
+
+Granting to individuals would have broken precisely this. The GC would have had
+to name the plumber personally — putting a seat, who has no authority to
+contract anything, in possession of a business relationship belonging to his
+employer. It would also survive his departure. With the org-to-org grant,
+leaving Ace removes his membership and therefore his access, with nobody
+revoking anything.
+
+### One person, two organizations (identity vs membership)
+
+The case one step further does *not* work today, and is common in the trades: a
+plumber who is a seat at Ace Plumbing **and** runs his own side jobs. Employed by
+one company, owner of another.
+
+`profiles.organization_id` is a single column, so this is unrepresentable. That
+is the same conflation described in §1 — `profiles` means both "who this person
+is" and "which company they are in" — and it is the root of most of the questions
+this document exists to answer.
+
+Separating them is the correct model regardless of the subcontractor feature:
+
+```sql
+-- identity: one row per human, no organization
+profiles(id, full_name, avatar_url, phone, push_token, is_active, …)
+
+-- membership: many rows per human
+organization_members(
+  id, profile_id, organization_id,
+  role,                 -- owner | pro | client | driver, within THIS org
+  is_active, joined_at, …
+)
+```
+
+Note that `role` becomes a property of the membership, not the person — which is
+also more correct. Someone can be an `owner` of their own company and a `pro`
+somewhere else, and today's schema cannot say that either.
+
+#### The active organization is a filter, never a boundary
+
+The single most dangerous mistake available here.
+
+A user who belongs to several organizations needs a notion of which one they are
+currently looking at. That selection is **UI state**. It must never appear in a
+security decision.
+
+- **Correct:** policies check *set membership* — "is this row's organization one
+  I am a member of" — resolved server-side from `organization_members`.
+- **Wrong:** policies check "equals the organization the client says it is
+  viewing." A client that lies about its active organization then reads another
+  tenant's data.
+
+Concretely, `current_user_organization_id()` becomes
+`current_user_organization_ids()` returning a set, and org-scoped policies move
+from `organization_id = current_user_organization_id()` to
+`organization_id = any(current_user_organization_ids())`. The active
+organization narrows what is *displayed*; it never widens what is *reachable*.
+
+This is a fail-open shape (§2.1) and belongs in the adversarial tests before any
+of it is written: a member of orgs A and B, claiming to be viewing org C, must
+read nothing from C.
+
 ### Multi-business owners (case 4)
 
-Genuinely different and deliberately *not* solved by the above. One human owning
-several organizations wants to switch between them, with full authority in each.
-That is real membership, and it warrants an `organization_members` table plus an
-active-organization concept.
+Solved by the same `organization_members` separation above — a GC running two
+LLCs holds an `owner` membership in each. No additional mechanism.
 
-It is separated because conflating "I own two companies" with "I'm working your
-job this month" is what made this feel intractable. Recommend deciding it on its
-own once subcontractor access is settled.
+It is worth keeping distinct from subcontractor access conceptually, because
+conflating "I own two companies" with "I'm working your job this month" is what
+made this feel intractable. They are different relationships and stay different
+rows: membership versus collaboration. But they share one prerequisite, which is
+that identity stops being welded to a single organization.
 
 ---
 
@@ -301,6 +370,11 @@ margins will eventually cause a real commercial problem for a customer.
 
 ## 7. Sequence
 
+0. Separate identity from membership (`organization_members`), including the
+   set-membership policy change and the adversarial test that a user cannot
+   read an organization they merely *claim* to be viewing. Everything else
+   assumes this, and retrofitting it later means touching every policy a
+   second time.
 1. Settle A and B.
 2. Write the adversarial RLS tests (§2.5) — they will fail.
 3. Add restrictive boundary policies to existing tables. No behaviour change for
