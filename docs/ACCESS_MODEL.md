@@ -61,7 +61,7 @@ Policies should be **lookups against explicit grant rows**:
 ```sql
 exists (select 1 from project_collaborations
         where project_id = projects.id
-          and collaborator_org_id = current_user_organization_id())
+          and collaborator_org_id = any(current_user_organization_ids()))
 ```
 
 The important property is not simplicity but **inspectability**. With logic-based
@@ -106,9 +106,10 @@ A permission check that never runs is indistinguishable from one that passes.
 **A subcontracting organization is granted access to a project. Nobody gains
 membership in anybody else's organization.**
 
-`profiles.organization_id` stays as it is — one person, one home organization.
-Access to work elsewhere is a separate, explicit grant, made from one
-organization to another, per project.
+Membership and collaboration stay different things. Membership (§4) says which
+organizations a person is *part of*. Collaboration says which single project of
+*another* organization their organization may reach. A subcontractor never gains
+membership in the hiring organization — only a grant on one job.
 
 ### Why this and not multi-organization membership
 
@@ -135,7 +136,7 @@ security boundary. Narrowness is the point.
 ### What the plumbing company sees
 
 Every `owner`/`pro` member of the plumbing company sees a project list that is
-the union of their own organization's jobs and the jobs their organization has
+the union of their own organizations' jobs and the jobs those organizations have
 been granted. One login each, one list, no switching, and no dependence on which
 individual was named when the grant was made. When the GC's job ends the grant is
 revoked and it disappears for all of them at once — nothing of theirs is
@@ -160,9 +161,10 @@ account already has an organization, because signup requires one. A solo plumber
 is an organization of one; a forty-person plumbing company is an organization of
 forty. Identical grant, no special case for either.
 
-It also makes the policy check *simpler* than a per-person grant would:
-"does my organization hold a grant on this project" resolves through
-`current_user_organization_id()`, which every policy already calls.
+It also makes the policy check *simpler* than a per-person grant would: "does an
+organization I belong to hold a grant on this project" resolves through the same
+membership helper every org-scoped policy already uses, rather than adding a
+separate per-person lookup alongside it.
 
 ```sql
 -- Which organization may reach a project belonging to another, and as what.
@@ -314,10 +316,10 @@ Illustrative, not final.
 create policy "projects_boundary" on projects
   as restrictive for all to authenticated
   using (
-    organization_id = current_user_organization_id()
+    organization_id = any(current_user_organization_ids())
     or exists (select 1 from project_collaborations
                where project_id = projects.id
-                 and collaborator_org_id = current_user_organization_id()
+                 and collaborator_org_id = any(current_user_organization_ids())
                  and accepted_at is not null
                  and revoked_at is null)
   );
@@ -325,8 +327,8 @@ create policy "projects_boundary" on projects
 -- Grants operate only inside it.
 create policy "projects_org_contractors" on projects
   for all to authenticated
-  using (organization_id = current_user_organization_id()
-         and current_user_is_contractor());
+  using (organization_id = any(current_user_organization_ids())
+         and current_user_is_contractor_in(organization_id));
 ```
 
 Money-bearing tables get a restrictive policy requiring either `owner`, or a
