@@ -295,6 +295,18 @@ does not require anyone to join anyone else's organization:
 One human cannot be a seat at one organization and an owner of another under a
 single login. They need two accounts with two email addresses.
 
+#### Confirmed against the launch market
+
+Decision reaffirmed after weighing the scenarios below. The launch market is
+**much smaller businesses** — solo operators and small crews — where neither
+trigger applies: at that size the owner *is* the bookkeeper, and one business
+means one organization.
+
+This is the good version of deferring a decision. Both triggers below only
+appear in customers who are further along, so if either ever arrives it arrives
+with real usage data and revenue behind it, rather than as a guess built against
+today. Meanwhile the launch market gets the strictest isolation available.
+
 #### What would reopen this
 
 Two triggers, either of which is enough.
