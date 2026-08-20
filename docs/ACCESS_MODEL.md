@@ -17,17 +17,19 @@ belong to exactly one organization, permanently.
 
 That breaks on four real cases:
 
-1. **A subcontractor on someone else's job.** An electrician works a GC's
-   project for three weeks. He is not an employee of that GC.
-2. **A subcontractor who is themselves a PNCHD customer.** The plumber has his
-   own owner account and his own jobs. He should not need a second login to
-   appear on a GC's project.
+1. **A subcontracted trade on someone else's job.** An electrical company works
+   a GC's project for three weeks. Nobody there is an employee of that GC.
+2. **A subcontractor who is themselves a PNCHD customer.** The plumbing company
+   has its own owner account, its own crew, and its own jobs. None of them
+   should need a second login to appear on a GC's project.
 3. **A one-off trade.** On one job, once, never returns.
 4. **A person who owns more than one business.** A GC running two LLCs, or a
    remodeling company plus a separate service outfit.
 
-Cases 1–3 are *the same shape*: someone outside the organization needs access to
-one job inside it. Case 4 is genuinely different and is treated separately.
+Cases 1–3 are *the same shape*: an organization outside this one needs access to
+one job inside it. Note the actor is an organization, not a person — the GC
+contracts with a company, and which of that company's people show up is not the
+GC's concern. Case 4 is genuinely different and is treated separately.
 
 There is also a permissions gap independent of the above: `owner` and `pro` have
 **identical** database access today. A seat employee can read every invoice the
@@ -57,8 +59,9 @@ test, and fail quietly.
 Policies should be **lookups against explicit grant rows**:
 
 ```sql
-exists (select 1 from project_access
-        where project_id = projects.id and profile_id = auth.uid())
+exists (select 1 from project_collaborations
+        where project_id = projects.id
+          and collaborator_org_id = current_user_organization_id())
 ```
 
 The important property is not simplicity but **inspectability**. With logic-based
@@ -100,11 +103,12 @@ A permission check that never runs is indistinguishable from one that passes.
 
 ## 3. Recommendation: project-scoped collaboration
 
-**A subcontractor is granted access to a project, not membership in an
-organization.**
+**A subcontracting organization is granted access to a project. Nobody gains
+membership in anybody else's organization.**
 
 `profiles.organization_id` stays as it is — one person, one home organization.
-Access to work elsewhere is a separate, explicit grant per project.
+Access to work elsewhere is a separate, explicit grant, made from one
+organization to another, per project.
 
 ### Why this and not multi-organization membership
 
@@ -120,46 +124,82 @@ With collaboration, a sub is not a member, so every existing org-scoped policy
 already excludes them, permanently, with nobody remembering anything. New tables
 inherit safety rather than inheriting exposure.
 
-**It is true.** A plumber is not a member of the general contractor's company.
-He is on a job. A data model that says otherwise is lying, and models that lie
-produce features that surprise people.
+**It is true.** A plumbing company is not part of the general contractor's
+company. It is contracted onto a job. A data model that says otherwise is lying,
+and models that lie produce features that surprise people.
 
 Note that generality is not a virtue here. The most general access model is
 "everyone can reach everything, with rules to restrict" — obviously wrong for a
 security boundary. Narrowness is the point.
 
-### What the plumber sees
+### What the plumbing company sees
 
-His project list is the union of his own organization's projects and the
-projects he has been granted. One login, one list, no switching. When the GC's
-job ends, the grant is revoked and it disappears — he does not have to do
-anything, and nothing of his is affected.
+Every `owner`/`pro` member of the plumbing company sees a project list that is
+the union of their own organization's jobs and the jobs their organization has
+been granted. One login each, one list, no switching, and no dependence on which
+individual was named when the grant was made. When the GC's job ends the grant is
+revoked and it disappears for all of them at once — nothing of theirs is
+affected.
 
 ---
 
 ## 4. Proposed schema
 
+### The grant is organization to organization
+
+A general contractor does not hire a plumber. They hire **a plumbing company**.
+Which technician turns up may change day to day, two may work at once, and the
+one who was originally given access may leave.
+
+So the grant is **org → project**, and the collaborating organization decides
+which of its own people work the job using its own internal roles. The GC never
+manages employees of a company it does not employ.
+
+This unifies the cases rather than multiplying them: in PNCHD everyone with an
+account already has an organization, because signup requires one. A solo plumber
+is an organization of one; a forty-person plumbing company is an organization of
+forty. Identical grant, no special case for either.
+
+It also makes the policy check *simpler* than a per-person grant would:
+"does my organization hold a grant on this project" resolves through
+`current_user_organization_id()`, which every policy already calls.
+
 ```sql
--- Who may reach a project they do not own, and as what.
-create table project_access (
+-- Which organization may reach a project belonging to another, and as what.
+create table project_collaborations (
   id                       uuid primary key default gen_random_uuid(),
   project_id               uuid not null references projects(id) on delete cascade,
-  profile_id               uuid not null references profiles(id) on delete cascade,
-  granting_organization_id uuid not null references organizations(id),
+  collaborator_org_id      uuid not null references organizations(id) on delete cascade,
+  granting_organization_id uuid not null references organizations(id) on delete cascade,
   access_level             text not null check (access_level in ('view', 'contribute')),
   trade                    text,          -- see open decision B
   invited_by               uuid not null references profiles(id),
   invited_at               timestamptz not null default now(),
   accepted_at              timestamptz,
-  revoked_at               timestamptz
+  revoked_at               timestamptz,
+
+  -- A project cannot be shared with the organization that already owns it.
+  constraint no_self_collaboration
+    check (collaborator_org_id <> granting_organization_id)
 );
 
-create unique index on project_access (project_id, profile_id)
+create unique index on project_collaborations (project_id, collaborator_org_id)
   where revoked_at is null;
 ```
 
 `revoked_at` rather than deletion: who had access to what, and when, is an audit
 question that outlives the grant.
+
+**Within the collaborating organization**, access follows that org's own rules —
+its `owner` and `pro` members can reach the shared project, its clients and
+drivers cannot. Their internal access control is their business, not the GC's.
+The GC's security interest is "which *companies* can see my job," and that is
+exactly what the grant expresses.
+
+If a GC ever needs to narrow a grant to specific individuals at the sub, that is
+an additive `project_collaboration_members` table later. Recommend not building
+it until someone asks — the org-level grant is the honest default, and narrower
+grants that nobody maintains drift into being wrong.
 
 ```sql
 -- What a member of an organization may do beyond the default for their role.
@@ -206,9 +246,9 @@ create policy "projects_boundary" on projects
   as restrictive for all to authenticated
   using (
     organization_id = current_user_organization_id()
-    or exists (select 1 from project_access
+    or exists (select 1 from project_collaborations
                where project_id = projects.id
-                 and profile_id = auth.uid()
+                 and collaborator_org_id = current_user_organization_id()
                  and accepted_at is not null
                  and revoked_at is null)
   );
@@ -267,7 +307,7 @@ margins will eventually cause a real commercial problem for a customer.
    current roles; verify the suite stays green.
 4. Add `profile_permissions`; move money behind it. Seats lose default money
    access — a deliberate, breaking change.
-5. Add `project_access` and collaborator policies.
+5. Add `project_collaborations` and collaborator policies.
 6. Column-level revokes on money columns.
 7. UI: invite a collaborator, grant billing, revoke both.
 
