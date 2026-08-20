@@ -421,6 +421,53 @@ Stated plainly because the two are easy to conflate:
 Two separate paths into a project, and the choice between them decides whether
 any money touches the platform.
 
+### 5.2c A sub company has its own field staff
+
+Bolt Electric is an organization with an owner, possibly office seats, and its
+own field techs. Those techs are profiles in **Bolt's** org. Getting one onto a
+general contractor's job is a three-hop chain:
+
+```
+GC's project --collaboration--> Bolt Electric --assignment--> Bolt's tech
+        (GC grants)                      (Bolt staffs it)
+```
+
+**The GC makes only the first hop.** The same reasoning that made the grant
+org-to-org applies here: the GC hires the company, the company decides who shows
+up, and swapping a tech must not require the GC to do anything.
+
+This needs a second assignment table rather than an extension of the first:
+
+```sql
+create table collaboration_assignments (
+  id            uuid primary key default gen_random_uuid(),
+  collaboration_id uuid not null references project_collaborations(id) on delete cascade,
+  profile_id    uuid not null references profiles(id) on delete cascade,
+  assigned_by   uuid not null references profiles(id),
+  assigned_at   timestamptz not null default now(),
+  is_active     boolean not null default true
+);
+```
+
+Separate rather than extending `project_assignments`, because extending it means
+loosening a policy that currently carries a clean organization check — the
+fail-open shape (§2.1) that has already produced three incidents here. A trigger
+enforces that `profile_id` belongs to the collaboration's `collaborator_org_id`,
+so a collaborating org can only assign its own people.
+
+**Access within the collaborating organization then mirrors access within any
+organization:**
+
+- **owner / seats** at Bolt see the shared project, because Bolt holds the grant
+- **field staff** at Bolt see it only if Bolt assigned them
+
+Which preserves what "field staff" means on both sides of the relationship:
+assigned-only, regardless of whose project it is.
+
+Note the consequence: a Bolt tech has no relationship with the GC's organization
+at all. They reach the job through Bolt's grant and Bolt's assignment, two hops
+removed, and nothing else in the GC's org is reachable to them.
+
 ### 5.3 Visibility must be obvious, not buried
 
 The controls for what clients and subs can see on a project must be **immediately
