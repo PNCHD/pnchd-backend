@@ -1,27 +1,87 @@
-# PNCHD — Session Hand-off (Phase 2, Block I)
+# PNCHD — Session Hand-off (Phase 2, Block J)
 
-## What this is
-I'm building PNCHD ("Punched"), a modular contractor management SaaS —
-Flutter mobile, React web dashboard, Supabase backend. Full architecture,
-pricing model, schema, and RLS strategy live in **`docs/ARCHITECTURE.md`** in
-this repo (pnchd-backend). Read that file first — it's the source of truth
-for every decision below.
+## Start here
 
-## Docs in this repo
-- **`docs/ARCHITECTURE.md`** — the source of truth. v3.0, markdown. Contains
-  everything from the original `.docx` plus every decision made since, with
-  additions marked `[Added v3.0]`. **Edit this file**, not the `.docx`.
-- `docs/ARCHITECTURE.docx` — superseded v2.0. Retained for reference only;
-  no longer authoritative and intentionally not maintained.
-- `docs/ENGINEERING_NOTES.md` — running explanation log. The *why* and the
-  gotchas behind the architecture: RLS policy composition, auth/session
-  mechanics, webhook correctness, framework-version traps, and bugs hit
-  along the way with their root causes.
-- `docs/ACCESS_MODEL.md` — **proposal, not built.** Subcontractor and
-  multi-organization access, the permission model for money, and the
-  security principles behind them (fail-closed, access-as-data, restrictive
-  policies, column-level grants). Two decisions open at the bottom.
-- `docs/HANDOFF.md` — this file. Session state, what's done, what's next.
+Building PNCHD ("Punched"), a modular contractor management SaaS — Flutter
+mobile, React web dashboard, Supabase backend.
+
+**Read in this order:**
+
+1. **`docs/ARCHITECTURE.md`** — the source of truth. Product, pricing, schema,
+   RLS strategy, engineering standards. Edit this, never the `.docx`.
+2. **`docs/ACCESS_MODEL.md`** — who can reach what, and why. All access
+   decisions are **closed**; §5b lists implementation gaps that remain.
+3. **`docs/ENGINEERING_NOTES.md`** — the *why* behind the architecture, and
+   every bug hit here with its root cause. §1.8 is the most important section
+   in the project.
+4. This file — current state and next steps.
+
+`docs/ARCHITECTURE.docx` is the superseded v2.0. Reference only, not maintained.
+
+## The one thing to understand before touching the database
+
+**Four security bugs have shipped in this project. All four were invisible to a
+fully green test suite, because every check ran as `service_role`, which
+bypasses both RLS and table grants.**
+
+- missing table GRANTs — no authenticated user could read anything
+- RLS recursion (42P17) — same, cascaded from `profiles` to every table
+- three enforcement triggers that never fired — a client could rewrite a
+  $1,000 proposal to $0.01
+- `profiles.is_active` enforced nothing — a fired employee kept full access
+
+The last two **failed open**: the app worked perfectly while a security control
+was silently absent. Only testing the *denial* case finds those.
+
+So: **a schema change is done when `./scripts/verify.sh --with-rls` passes, not
+when `supabase db push` succeeds.** Write the adversarial test first, watch it
+fail, then fix. Details in ENGINEERING_NOTES §1.5–§1.8.
+
+## Verifying
+
+```bash
+# backend — static policy checks + Edge Function lint/typecheck/tests
+cd pnchd-backend && ./scripts/verify.sh
+
+# ...plus the RLS suite as real signed-in users (needs credentials)
+export SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... SUPABASE_ANON_KEY=...
+./scripts/verify.sh --with-rls
+
+cd pnchd-web    && npm run verify      # lint + typecheck + 92 tests
+cd pnchd-mobile && flutter analyze && flutter test   # 30 tests
+```
+
+Counts as of Block J: **web 92, mobile 30, RLS 28, Edge Functions 32.**
+
+## Seeing the app running
+
+```bash
+cd pnchd-backend/supabase/seed
+SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... deno task demo
+```
+
+Seeds a realistic contractor account and prints a working sign-in link — no
+waiting on email. Then `cd pnchd-web && npx vite --port 5183`. The user wants
+to *see* screens as they are built; do this rather than describing UI in prose.
+
+**After any migration**, regenerate the web types or TypeScript drifts from the
+schema silently:
+
+```bash
+supabase gen types typescript --project-id jzmcgxugmeaebvxcrkjn \
+  > pnchd-web/src/types/database.types.ts
+```
+
+## Blocked on the user (dashboards, not code)
+
+1. **Custom SMTP (Resend) in Supabase Auth.** Magic link means email *is* the
+   login path; the built-in sender allows a few per hour. Nobody can log in
+   without this.
+2. **Register `io.pnchd.pnchd_mobile://login-callback`** in Supabase Auth →
+   URL Configuration, or mobile magic links fail silently.
+3. **Stripe secrets + Price metadata** (`module_key` per module price,
+   `line_type=seats`). The subscription reconcile joins on that metadata and it
+   does not exist yet. Edge Functions are written but undeployed.
 
 ## Repo layout
 - `pnchd-backend` — this repo. `docs/`, `supabase/migrations/`,
@@ -186,7 +246,11 @@ guessing at schema additions that weren't spec'd.
   `is_client_feature_enabled()` needs to check for a client-specific row
   before falling back to the org-wide one.
 
-## What's next
+## Build history — Blocks B through I
+
+Kept for the reasoning, not the status. Every block below is complete; the
+current state is in "Where things stand" near the end of this file.
+
 **Block B — Supabase client setup in both apps — COMPLETE.**
 
 `pnchd-mobile` — committed and pushed (`5a8e89f`, theming follow-up `daca3c3`):
@@ -517,31 +581,46 @@ Counts: web 92, mobile 30, RLS 23, Edge Functions 32.
   transaction (PostgREST can't). Recoverable by saving again, but wants a
   SECURITY DEFINER function.
 
-**What's next, in rough order:**
-1. **Deploy the Edge Functions** — blocked on secrets and provider config
-   (see Block D above). Needs your Stripe/Docuseal accounts.
-2. **Stripe Price metadata** — `module_key` on each module price,
-   `line_type=seats` on the seats price. The subscription reconcile depends
-   on this and it doesn't exist in Stripe yet.
-3. **More real screens** — projects is done; proposals, invoices, documents,
-   scheduling, and both client/driver shells are still placeholders.
-4. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
+## Where things stand (end of Block J)
 
-### Backlog (captured, not designed)
-- **Referral rewards** — ARCHITECTURE.md §2.5a. Note the founding-member
-  conflict: the Layer 3 webhook guard refuses subscription changes for them,
-  so a referral *discount* would be blocked or require weakening the one
-  mechanism protecting a lifetime price. Account credit avoids that.
-- **Access model** — `ACCESS_MODEL.md`, decisions A and B still open.
-- **Scheduling schema** — still owed. No events table exists; `scheduling` is
-  a launch module with a nav entry and route but nothing behind it.
+**Built, tested, deployed to `pnchd-dev`:** schema (18 migrations), Edge
+Functions (written, not deployed), magic-link auth on both platforms,
+organization setup, projects CRUD-ish, proposals and invoices with line items.
 
-**Decision logged this session, not yet acted on:** Section 10.2's page
-list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
-modules and has a Flutter feature folder (Section 9.1) but no web
-counterpart as written. Confirmed: web should get scheduling too. Add a
-`/scheduling` route when React page scaffolding actually happens — no rush
-now.
+**Design settled this session, not yet built** — all in `ACCESS_MODEL.md`:
+
+- collaboration is granted **organization → organization**, per project, never
+  to individuals
+- **one person belongs to exactly one organization** — no membership table, no
+  active-org concept. This is a security decision, not a simplification: it
+  makes cross-tenant leakage structurally impossible
+- a sub company staffs a shared job itself via `collaboration_assignments`;
+  the contractor only makes the first hop
+- **punchlist authority is asymmetric** — only GC/PM create, amend, accept or
+  close; everyone else submits evidence ("punch requests")
+- **append-only** — work submissions cannot be deleted by anyone, including the
+  owner. Items are unchecked and descriptions struck through, never erased
+- subs see **their own trade scope by default**, widened deliberately by the
+  GC/PM per project
+- money flows one direction only; backcharges are deductions, never reverse
+  invoices. Nothing legal, no escrow
+
+**Next work, in order of value:**
+
+1. **Punchlist** — the feature the app is named after. Needs `punch_items`,
+   `punch_submissions`, photo storage, and `collaboration_assignments` (a sub's
+   own crew cannot currently be assigned to a shared job, which blocks most of
+   the value).
+2. **Scheduling** — still owed a schema proposal. No events table exists at
+   all, despite `scheduling` being a launch module with a nav entry and a route
+   pointing at nothing.
+3. **Mobile proposals/invoices** — pure execution, needs no decisions.
+4. **The §5b gaps** — chiefly that a subcontractor cannot bill a general
+   contractor, because `invoices.client_id` can only name a person.
+
+**Also outstanding:** full CRUD is expected on every entity (update and delete,
+not just read and create) — projects, proposals, invoices, documents, clients.
+Archive rather than hard-delete anything with money attached.
 
 ## How I like to work
 Decision-already-made, execute-only-that, move-on. I don't need elaborate
