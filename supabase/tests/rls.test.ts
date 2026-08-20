@@ -378,6 +378,184 @@ Deno.test("projects: fetching another org's project by id returns nothing", asyn
   assertEquals(data, null, "read a project belonging to another organization");
 });
 
+/**
+ * The client-write triggers from migrations 005/006. Written in Block A and
+ * never exercised until now — they are the only thing stopping a client from
+ * editing amounts on a document they are being asked to agree to.
+ */
+Deno.test("proposals: a client can approve a sent proposal", async () => {
+  const { data: proposal } = await admin
+    .from("proposals")
+    .insert({
+      organization_id: fixture.orgA.id,
+      client_id: fixture.orgA.users.client.id,
+      title: "Approvable",
+      subtotal_cents: 10000,
+      total_cents: 10000,
+      status: "sent",
+    })
+    .select("id")
+    .single();
+
+  const { data, error } = await fixture.orgA.users.client.client
+    .from("proposals")
+    .update({ approved_at: new Date().toISOString() })
+    .eq("id", proposal!.id)
+    .select("id, status, approved_at")
+    .single();
+
+  assertEquals(error?.code ?? null, null, error?.message ?? "");
+  // The trigger flips status itself, so the client app only ever writes
+  // approved_at and never touches status directly.
+  assertEquals(data?.status, "approved", "trigger did not auto-approve");
+  assert(data?.approved_at !== null);
+});
+
+Deno.test("proposals: a client cannot approve a draft", async () => {
+  const { data: proposal } = await admin
+    .from("proposals")
+    .insert({
+      organization_id: fixture.orgA.id,
+      client_id: fixture.orgA.users.client.id,
+      title: "Still a draft",
+      subtotal_cents: 5000,
+      total_cents: 5000,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+
+  const { error } = await fixture.orgA.users.client.client
+    .from("proposals")
+    .update({ approved_at: new Date().toISOString() })
+    .eq("id", proposal!.id)
+    .select("id");
+
+  assert(error !== null, "client approved a proposal that was never sent");
+});
+
+Deno.test("proposals: a client cannot alter the amount while approving", async () => {
+  const { data: proposal } = await admin
+    .from("proposals")
+    .insert({
+      organization_id: fixture.orgA.id,
+      client_id: fixture.orgA.users.client.id,
+      title: "Amount tamper attempt",
+      subtotal_cents: 100000,
+      total_cents: 100000,
+      status: "sent",
+    })
+    .select("id")
+    .single();
+
+  const { error } = await fixture.orgA.users.client.client
+    .from("proposals")
+    .update({ approved_at: new Date().toISOString(), total_cents: 1 })
+    .eq("id", proposal!.id)
+    .select("id");
+
+  assert(error !== null, "client changed the total while approving");
+
+  const { data: after } = await admin
+    .from("proposals")
+    .select("total_cents, status")
+    .eq("id", proposal!.id)
+    .single();
+  assertEquals(after?.total_cents, 100000, "amount was modified");
+  assertEquals(after?.status, "sent", "status changed despite the rejection");
+});
+
+Deno.test("invoices: a client cannot mark an invoice paid", async () => {
+  // `paid` is reachable only from the payment_intent.succeeded Edge Function
+  // via the service role. A client marking their own invoice paid would be
+  // straightforward theft.
+  await admin.from("client_feature_toggles").upsert(
+    {
+      organization_id: fixture.orgA.id,
+      feature_key: "client_payments",
+      is_enabled: true,
+    },
+    { onConflict: "organization_id,feature_key" },
+  );
+
+  const { data: invoice } = await admin
+    .from("invoices")
+    .insert({
+      organization_id: fixture.orgA.id,
+      client_id: fixture.orgA.users.client.id,
+      title: "Self-pay attempt",
+      subtotal_cents: 25000,
+      total_cents: 25000,
+      status: "sent",
+    })
+    .select("id")
+    .single();
+
+  const { error } = await fixture.orgA.users.client.client
+    .from("invoices")
+    .update({ status: "paid", paid_at: new Date().toISOString() })
+    .eq("id", invoice!.id)
+    .select("id");
+
+  assert(error !== null, "client marked their own invoice paid");
+
+  const { data: after } = await admin
+    .from("invoices")
+    .select("status, paid_at")
+    .eq("id", invoice!.id)
+    .single();
+  assertEquals(after?.status, "sent");
+  assertEquals(after?.paid_at, null);
+});
+
+Deno.test("line_items: a client cannot add items to their own proposal", async () => {
+  const { data: proposal } = await admin
+    .from("proposals")
+    .insert({
+      organization_id: fixture.orgA.id,
+      client_id: fixture.orgA.users.client.id,
+      title: "Line item tamper",
+      subtotal_cents: 10000,
+      total_cents: 10000,
+      status: "sent",
+    })
+    .select("id")
+    .single();
+
+  const { error } = await fixture.orgA.users.client.client
+    .from("line_items")
+    .insert({
+      organization_id: fixture.orgA.id,
+      parent_type: "proposal",
+      parent_id: proposal!.id,
+      description: "Discount I added myself",
+      quantity: 1,
+      unit_price_cents: -9000,
+      total_cents: -9000,
+      sort_order: 99,
+    })
+    .select("id");
+
+  assert(error !== null, "client wrote a line item");
+});
+
+Deno.test("line_items: the polymorphic parent must actually exist", async () => {
+  // Migration 007 validates this with a trigger, since parent_id cannot have a
+  // real foreign key across two possible tables.
+  const { error } = await admin.from("line_items").insert({
+    organization_id: fixture.orgA.id,
+    parent_type: "proposal",
+    parent_id: "00000000-0000-0000-0000-000000000000",
+    description: "Orphan",
+    quantity: 1,
+    unit_price_cents: 100,
+    total_cents: 100,
+    sort_order: 0,
+  });
+
+  assert(error !== null, "wrote a line item pointing at a nonexistent parent");
+});
+
 Deno.test("teardown", async () => {
   await fixture.cleanup();
 });

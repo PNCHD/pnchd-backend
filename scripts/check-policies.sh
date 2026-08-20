@@ -26,7 +26,9 @@ report() {
 for file in "$MIGRATIONS"/*.sql; do
   name=$(basename "$file")
   [[ "$name" < "$FIX_MIGRATION" || "$name" == "$FIX_MIGRATION"* ]] && continue
-  if grep -q "from profiles where id = auth.uid()" "$file"; then
+  # Strip SQL comments first — migrations legitimately quote the broken pattern
+  # when documenting why it was removed.
+  if sed 's/--.*$//' "$file" | grep -q "from profiles where id = auth.uid()"; then
     report "Inline 'from profiles where id = auth.uid()' in $name" \
       "Causes 42P17 infinite recursion. Use current_user_organization_id()," \
       "current_user_role(), current_user_is_admin(), or current_user_is_contractor()."
@@ -42,7 +44,26 @@ while read -r table; do
 done < <(grep -hoE "^create table if not exists [a-z_]+" "$MIGRATIONS"/*.sql \
   | awk '{print $NF}' | sort -u)
 
-# --- 3. Module/feature gate written as a standalone policy -------------------
+# --- 3. PL/pgSQL variables shadowing reserved SQL keywords --------------------
+# `current_role`, `current_user`, `session_user` etc. are keywords that evaluate
+# to the SQL role name. A declared variable of the same name loses to the
+# keyword, so `if current_role = 'client'` compares 'authenticated' = 'client'
+# and the branch is silently dead — no error, no warning. This shipped three
+# enforcement triggers that never fired.
+for file in "$MIGRATIONS"/*.sql; do
+  name=$(basename "$file")
+  [[ "$name" < "20260819181016" || "$name" == "20260819181016"* ]] && continue
+  for keyword in current_role current_user session_user current_catalog current_schema; do
+    if grep -qE "^\s+${keyword}\s+(text|name|varchar)" "$file"; then
+      report "PL/pgSQL variable named '$keyword' in $name" \
+        "That is a reserved SQL keyword; it wins over the variable and the" \
+        "comparison silently never matches. Use current_user_role() or another" \
+        "non-keyword name."
+    fi
+  done
+done
+
+# --- 4. Module/feature gate written as a standalone policy -------------------
 # Permissive policies OR together, so a gate with no ownership condition of its
 # own is satisfied by a sibling policy and gates nothing. A gate is fine
 # alongside either an org check or an auth.uid() ownership check.

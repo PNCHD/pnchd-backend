@@ -233,6 +233,59 @@ Two things worth carrying forward:
   flow is the one that will break. Bootstrap paths — signup, invites, the first
   row of anything — are where this bites.
 
+### 1.7a A PL/pgSQL variable named `current_role` silently disabled three triggers
+
+The worst bug so far, because it failed *open* rather than closed.
+
+Three enforcement triggers — the ones that stop a client editing a document
+they're being asked to agree to — were written like this:
+
+```sql
+declare
+  current_role text;
+begin
+  select role into current_role from profiles where id = auth.uid();
+  if current_role = 'client' then
+    ... raise exception if they changed anything but approved_at ...
+```
+
+**`current_role` is a reserved SQL keyword** in Postgres that evaluates to the
+current SQL role name. The keyword wins over the declared variable, so the
+condition compared `'authenticated' = 'client'` and was permanently false. The
+entire enforcement body was dead code.
+
+No error. No warning. The triggers existed, fired on every update, and did
+nothing.
+
+Verified against dev as a real signed-in client:
+
+- approved a proposal that had never been sent
+- **rewrote a $1,000.00 proposal to $0.01 while approving it**
+- `status` was never auto-flipped to `approved`, because that assignment sits
+  in the same dead branch
+
+The invoices copy of the trigger happened to be rewritten during the RLS
+recursion fix (§1.6) to call `current_user_role()`, which is the only reason
+invoice enforcement worked while the other two didn't — an accident, not a fix.
+
+**Why this class is especially dangerous:** the RLS bugs in §1.5 and §1.6 failed
+*closed*. Everything broke loudly and nothing could be read. This one failed
+*open* — the app worked perfectly, and the only symptom was that a security
+control silently wasn't there. Nothing short of testing the adversarial case
+would have found it.
+
+**Two defences now:**
+
+- `scripts/check-policies.sh` flags any PL/pgSQL variable named after a reserved
+  keyword (`current_role`, `current_user`, `session_user`, …).
+- `supabase/tests/rls.test.ts` asserts the *negative* cases directly — that a
+  client cannot approve a draft, cannot alter an amount, cannot mark an invoice
+  paid, cannot write line items.
+
+**Generalizable lesson:** test that the control *denies*, not just that the
+happy path works. A permission check that never runs is indistinguishable from
+one that passes, right up until someone exploits it.
+
 ### 1.8 The lesson these outages share, and what actually closes it
 
 Three bugs, all found the same way, the first two capable of taking down the entire product,
