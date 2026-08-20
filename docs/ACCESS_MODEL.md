@@ -1,6 +1,8 @@
 # PNCHD — Access Model (Proposal)
 
-**Status: proposal, not built.** Two decisions at the bottom are still open.
+**Status: proposal, not built.** Two decisions at the bottom are still open, and
+§5a lists seven relationships this model does not yet cover — one of them
+structural (subcontractors cannot bill general contractors).
 
 **Decided so far:** collaboration is granted organization-to-organization, not
 to individuals (§4); and a person belongs to exactly one organization — no
@@ -340,6 +342,101 @@ Money-bearing tables get a restrictive policy requiring either `owner`, or a
 `billing` permission row — so a collaborator can never reach an invoice
 regardless of any other policy, and neither can a seat without an explicit
 grant.
+
+---
+
+## 5a. Relationship audit — what this model does NOT yet cover
+
+Written by walking every pair of actors rather than only the ones that prompted
+the design. Ordered by severity.
+
+### G1. A subcontractor cannot bill the general contractor (structural)
+
+Ace Plumbing does the work and invoices the GC. **The GC is Ace's customer.**
+
+`invoices.client_id` references `profiles`, which assumes the client is a
+*person* — a homeowner. To bill a company, Ace would have to fabricate a client
+profile standing in for "GC Corp", and the GC would never see that invoice in
+their own account or be able to pay it through the platform.
+
+So the B2B leg of the money flow does not exist. `client_payments` currently
+only models contractor → homeowner, and sub → GC is among the most common
+transactions in construction.
+
+Options, none chosen:
+
+- Allow `invoices.client_organization_id` as an alternative to `client_id`,
+  exactly one of the two set. Invoice becomes visible to the billed
+  organization, payable through Connect, and the existing client-approval
+  trigger needs a parallel path for an organization approving rather than a
+  person.
+- Model the GC as a client profile inside Ace's org and accept that the GC
+  cannot see or pay it in-app. Loses the payments module for this case
+  entirely.
+
+The first is the honest one. It is a real schema change to `invoices`,
+`proposals`, and their RLS.
+
+### G2. Grant authority is unbounded (hole in §4)
+
+`project_collaborations` constrains only that collaborator ≠ granter. It never
+requires `granting_organization_id` to *own* the project. As written, a
+collaborator could grant a project onward to a fourth organization.
+
+Sub-subcontracting is real, but it must be the project owner's decision. Fix:
+a check that the granting organization owns the project, enforced by trigger
+since it spans tables — plus an explicit decision about whether a collaborator
+may ever invite anyone (recommend: no, the owner invites everyone).
+
+### G3. A subcontractor's crew cannot be assigned to the job
+
+`project_assignments` is organization-scoped, so Ace's own crew and drivers
+cannot be assigned to the GC's project. The sub can see the job but nobody at
+the sub can be scheduled on it, which makes the collaboration close to useless
+for field work — the thing it exists for.
+
+Needs either assignments that permit a collaborating organization's members, or
+a parallel per-collaboration assignment concept.
+
+### G4. Does the subcontractor see the GC's client?
+
+Projects carry `client_id`. If Ace can see the project, can Ace see the
+homeowner's identity and contact details?
+
+Arguments both ways: the plumber may genuinely need to reach the homeowner for
+access to the property; equally, the homeowner is the GC's commercial
+relationship and handing it to every trade invites disintermediation.
+
+Folds into open decision B.
+
+### G5. Do two subcontractors on one job see each other?
+
+Ace Plumbing and Bolt Electric both collaborate on the same project. Do they see
+each other's presence, line items, documents, or schedule entries?
+
+Folds into open decision B, but note it is a distinct question from B — B is
+about *pricing* visibility, this is about *existence*.
+
+### G6. Cross-organization documents and notifications
+
+- A subcontract agreement is signed *between* the GC and the sub.
+  `document_signers.profile_id` is org-scoped, so a signer from another
+  organization is not currently expressible.
+- `notifications` carries `organization_id` and `recipient_id`. A notification
+  to a sub about the GC's project has an ambiguous owner: the GC's org (where
+  the work is) or the sub's (where the recipient is). Recommend the recipient's,
+  so a sub's inbox never depends on retaining access to the GC's org.
+
+### G7. A contractor who is also somebody's client
+
+A plumber whose own house needs electrical work is a `client` of Bolt Electric
+and an `owner` of Ace Plumbing. Under the one-person-one-organization decision
+that is two accounts.
+
+Called out because it is likely **more common than the moonlighting seat** —
+trades hire each other constantly — and it is the same decision, not a new one.
+It does not change the recommendation, but it does raise how often two accounts
+will be felt.
 
 ---
 
