@@ -527,6 +527,15 @@ Counts: web 92, mobile 30, RLS 23, Edge Functions 32.
    scheduling, and both client/driver shells are still placeholders.
 4. **§5.2 schema gaps** — all resolved except #5 (Stripe module-removal API).
 
+### Backlog (captured, not designed)
+- **Referral rewards** — ARCHITECTURE.md §2.5a. Note the founding-member
+  conflict: the Layer 3 webhook guard refuses subscription changes for them,
+  so a referral *discount* would be blocked or require weakening the one
+  mechanism protecting a lifetime price. Account credit avoids that.
+- **Access model** — `ACCESS_MODEL.md`, decisions A and B still open.
+- **Scheduling schema** — still owed. No events table exists; `scheduling` is
+  a launch module with a nav entry and route but nothing behind it.
+
 **Decision logged this session, not yet acted on:** Section 10.2's page
 list is missing a `/scheduling` route — `scheduling` is one of the 4 launch
 modules and has a Flutter feature folder (Section 9.1) but no web

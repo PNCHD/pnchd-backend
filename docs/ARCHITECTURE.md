@@ -181,6 +181,47 @@ await stripe.subscriptionItems.update(subscriptionItemId, {
 });
 ```
 
+### 2.5a Referral Rewards **[Added v3.0 — captured, not designed]**
+
+Wanted: a discount or reward for successful referrals. Not specified yet. The
+notes below are the decisions it will need, not a design.
+
+**The strongest referral channel is already in the product.** Project
+collaboration (`ACCESS_MODEL.md`) puts a subcontracting company into a real job
+with a working account before anyone asks them to buy anything. A trade that has
+already used PNCHD on someone else's project is a far warmer prospect than one
+handed a referral code, and the "referral" is a natural by-product of the
+contractor doing their normal work. Any reward scheme should treat that as the
+primary path rather than bolting a code system alongside it.
+
+Clients are a second, weaker channel — a homeowner who signed and paid through
+PNCHD may mention it to the next contractor they hire.
+
+**Decisions needed:**
+
+- **What counts as successful.** Signup alone invites fraud and, with a 30-day
+  trial, costs money before any arrives. Converted-to-paid is the honest trigger;
+  surviving 2–3 billing cycles is safer still.
+- **What the reward is.** Recurring discount, one-off account credit, free
+  months, or cash. Recurring discounts compound and are hard to unwind; credits
+  are simpler to reason about and to reverse if a referral churns or charges back.
+- **Fraud handling.** Self-referral, related accounts, and referral rings. At
+  minimum the referrer and referred must not share a Stripe customer or payment
+  method.
+- **Whether the referred party is rewarded too.** Two-sided referrals convert
+  much better but double the cost per acquisition.
+
+**Conflict to resolve — founding members.** Section 2.3's Layer 3 guard has the
+`customer.subscription.updated` webhook *refuse* changes to founding member
+subscriptions, which is exactly what protects their locked price. A referral
+discount applied to a founding member's subscription would either be blocked by
+that guard or require weakening it. Founding members are also the subscribers
+most likely to refer, being the earliest and most enthusiastic. Options: reward
+them with account credit rather than a subscription discount (leaves the guard
+untouched), or extend the guard to permit discount-only changes. **Credit is the
+safer of the two** — it keeps the one mechanism that guarantees a promise made
+for life.
+
 ### 2.6 Revenue Milestones
 
 ARPU adjusted to ~$55/month reflecting lower base fee, reduced module prices, and
