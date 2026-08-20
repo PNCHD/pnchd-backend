@@ -297,14 +297,39 @@ single login. They need two accounts with two email addresses.
 
 #### What would reopen this
 
-The moonlighting seat is the *occasional* case and two accounts is tolerable
-there. The case that will press hardest is a contractor running **two LLCs they
-own and operate daily** — switching by logging out is genuinely poor.
+Two triggers, either of which is enough.
 
-Reopen if that becomes a real, repeated complaint from actual customers rather
-than a hypothetical. Adding membership later is a migration touching every
-policy, and is worth doing properly at that point instead of carrying the risk
-now for a case that may never arrive.
+**1. The fractional bookkeeper.** Small contractors routinely share a part-time
+bookkeeper or office manager — one person doing the books for three or four
+companies, a day a week each. This is the strongest case against the decision:
+
+- it is **recurring and structural**, not incidental — it is how small
+  businesses staff back-office
+- it involves the **most sensitive data in the product**: invoices, payments,
+  margins
+- **collaboration cannot solve it.** Collaboration is project-scoped by design;
+  a bookkeeper needs org-wide financial access, so this genuinely requires
+  membership rather than a grant
+
+Under the current decision she needs a separate login per contractor. Workable,
+but she is in the app daily, which is the usage pattern where switching by
+logging out actually hurts.
+
+**2. A contractor operating multiple entities daily.** Separate LLCs for
+residential versus commercial, per-job entities for liability, or separate
+entities for multi-state licensing. Common in construction generally; frequency
+at 1–20 employees is unknown.
+
+The moonlighting seat and the contractor-who-is-another-contractor's-client are
+*occasional* cases where two accounts is tolerable. These two are not.
+
+**The question that settles it:** does the market have people doing books for
+several contractors, and would they *live in* the software daily or merely
+receive exports? If they would live in it, membership is worth doing before
+there is data rather than after.
+
+Note the design-architect channel is *not* one of these — a designer working
+across several contractors' projects is collaboration, already handled.
 
 ### Multi-business owners (case 4)
 
