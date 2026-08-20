@@ -1,7 +1,7 @@
 # PNCHD — Access Model (Proposal)
 
 **Status: proposal, not built.** Two decisions at the bottom are still open, and
-§5a lists seven relationships this model does not yet cover — one of them
+§5b lists seven relationships this model does not yet cover — one of them
 structural (subcontractors cannot bill general contractors).
 
 **Decided so far:** collaboration is granted organization-to-organization, not
@@ -345,7 +345,87 @@ grant.
 
 ---
 
-## 5a. Relationship audit — what this model does NOT yet cover
+## 5. Requirements from practice
+
+From a design architect who works these relationships daily. These are
+observations about how the industry actually behaves, not preferences.
+
+### 5.1 Not every trade gets an account
+
+Only the prominent subs — HVAC, plumbing, electrical — are typically given
+access in software like this. Cabinet install, tile, painters usually are not.
+
+So access is **selective and deliberate**, not something granted to everyone on a
+job. This supports the fail-closed model: nobody is on a project until somebody
+puts them there, and most trades never are.
+
+### 5.2 Punchlist authority is asymmetric
+
+**Only the GC or project manager can create, edit, or close punch items.**
+
+Everyone else — subs, field staff — *submits* against an item: a comment with
+photos or video showing the work is done. The PM or GC then signs off.
+
+This is a permission split, not a role split. Two distinct capabilities:
+
+- `punch:manage` — create, amend, accept, reject. GC/PM only.
+- `punch:respond` — submit evidence against an assigned item. Subs and field staff.
+
+A sub can never mark their own work accepted. That is the entire point of a
+punchlist.
+
+### 5.3 Visibility must be obvious, not buried
+
+The controls for what clients and subs can see on a project must be **immediately
+visible and easy to reach** — a single place showing who can see what, per
+project.
+
+This is from a real failure: in other software, a company **accidentally exposed
+correspondence and payment information to clients** who should never have seen
+it. That is a trust-destroying event, and it happened because the controls were
+obscure enough that nobody realized what was on.
+
+Design implications:
+
+- A per-project visibility panel, reachable in one step, listing every party and
+  what they can currently see.
+- State shown affirmatively — "the client can see X" — not as unlabeled
+  checkboxes whose meaning has to be inferred.
+- Default to hidden. Sharing is an act; concealment is the resting state.
+
+Note this is a *UI* requirement backed by an RLS requirement. The panel reflects
+enforcement; it does not implement it. Anything the panel claims is hidden must
+be unreachable at the database, or the panel is lying.
+
+### 5.4 Append-only: the record is evidence
+
+Nothing that establishes what happened may be destroyed.
+
+- Items can be **unchecked**, and descriptions can be **struck through** — still
+  visible, marked as withdrawn rather than removed.
+- Edits are **appended**, not overwritten. The prior text remains legible.
+- **Work submissions cannot be deleted, including by the owner.** If a sub
+  submitted photos of completed work, that evidence survives — even if the GC
+  later closes the item, disputes it, or would prefer it gone.
+
+The stated purpose: *to keep everyone honest.* Both directions. A GC cannot erase
+proof that a sub did the work; a sub cannot revise what they submitted after the
+fact.
+
+Practically this means punch items and submissions are **append-only tables with
+soft state**, not mutable rows:
+
+- no `DELETE` policy for any role, including `owner`
+- `UPDATE` restricted to status transitions and withdrawal flags
+- amendments stored as new rows referencing the original
+- every row carries who and when
+
+This is the one place where the platform genuinely is the legal record, so it
+should be built to hold up as one.
+
+---
+
+## 5b. Relationship audit — what this model does NOT yet cover
 
 Written by walking every pair of actors rather than only the ones that prompted
 the design. Ordered by severity.
