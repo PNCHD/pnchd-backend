@@ -1,7 +1,10 @@
 # PNCHD — Access Model (Proposal)
 
-**Status: proposal, not built.** Supersedes nothing yet. Two decisions at the
-bottom are still open.
+**Status: proposal, not built.** Two decisions at the bottom are still open.
+
+**Decided so far:** collaboration is granted organization-to-organization, not
+to individuals (§4); and a person belongs to exactly one organization — no
+membership table, no active-organization concept (§4).
 
 The requirement driving this: **no data should ever be reachable by the wrong
 person.** Everything below is chosen for that first. Where a design is chosen
@@ -24,7 +27,8 @@ That breaks on four real cases:
    should need a second login to appear on a GC's project.
 3. **A one-off trade.** On one job, once, never returns.
 4. **A person who owns more than one business.** A GC running two LLCs, or a
-   remodeling company plus a separate service outfit.
+   remodeling company plus a separate service outfit. **Decided: not
+   supported** — two organizations means two accounts. See §4.
 
 Cases 1–3 are *the same shape*: an organization outside this one needs access to
 one job inside it. Note the actor is an organization, not a person — the GC
@@ -61,7 +65,7 @@ Policies should be **lookups against explicit grant rows**:
 ```sql
 exists (select 1 from project_collaborations
         where project_id = projects.id
-          and collaborator_org_id = any(current_user_organization_ids()))
+          and collaborator_org_id = current_user_organization_id())
 ```
 
 The important property is not simplicity but **inspectability**. With logic-based
@@ -136,7 +140,7 @@ security boundary. Narrowness is the point.
 ### What the plumbing company sees
 
 Every `owner`/`pro` member of the plumbing company sees a project list that is
-the union of their own organizations' jobs and the jobs those organizations have
+the union of their own organization's jobs and the jobs that organization has
 been granted. One login each, one list, no switching, and no dependence on which
 individual was named when the grant was made. When the GC's job ends the grant is
 revoked and it disappears for all of them at once — nothing of theirs is
@@ -161,10 +165,10 @@ account already has an organization, because signup requires one. A solo plumber
 is an organization of one; a forty-person plumbing company is an organization of
 forty. Identical grant, no special case for either.
 
-It also makes the policy check *simpler* than a per-person grant would: "does an
-organization I belong to hold a grant on this project" resolves through the same
-membership helper every org-scoped policy already uses, rather than adding a
-separate per-person lookup alongside it.
+It also makes the policy check *simpler* than a per-person grant would: "does my
+organization hold a grant on this project" resolves through
+`current_user_organization_id()`, which every policy already calls, rather than
+adding a separate per-person lookup alongside it.
 
 ```sql
 -- Which organization may reach a project belonging to another, and as what.
@@ -241,69 +245,70 @@ employer. It would also survive his departure. With the org-to-org grant,
 leaving Ace removes his membership and therefore his access, with nobody
 revoking anything.
 
-### One person, two organizations (identity vs membership)
+### DECIDED: one person, one organization
 
-The case one step further does *not* work today, and is common in the trades: a
-plumber who is a seat at Ace Plumbing **and** runs his own side jobs. Employed by
-one company, owner of another.
+**A person belongs to exactly one organization. `profiles.organization_id` stays
+a single column. There is no membership table and no active-organization
+concept.**
 
-`profiles.organization_id` is a single column, so this is unrepresentable. That
-is the same conflation described in §1 — `profiles` means both "who this person
-is" and "which company they are in" — and it is the root of most of the questions
-this document exists to answer.
+Someone who is a seat at one company and wants to run side jobs creates a
+separate owner account under a different email.
 
-Separating them is the correct model regardless of the subcontractor feature:
+#### Why this is the more secure model, not merely the simpler one
 
-```sql
--- identity: one row per human, no organization
-profiles(id, full_name, avatar_url, phone, push_token, is_active, …)
+With single-tenant identity, cross-tenant leakage is not something policies have
+to prevent — it is structurally impossible. There is no membership set to
+resolve, no active organization to select, and therefore none of the failure
+mode described below.
 
--- membership: many rows per human
-organization_members(
-  id, profile_id, organization_id,
-  role,                 -- owner | pro | client | driver, within THIS org
-  is_active, joined_at, …
-)
-```
+> **The trap this avoids.** A user belonging to several organizations needs a
+> notion of which one they are currently viewing. That selection is UI state and
+> must never enter a security decision. Policies must check *set membership*
+> resolved server-side; a policy that compares against the organization the
+> *client says* it is viewing lets a lying client read another tenant's data.
+> This is the standard way multi-tenant systems get breached, and it is a
+> fail-open shape (§2.1).
 
-Note that `role` becomes a property of the membership, not the person — which is
-also more correct. Someone can be an `owner` of their own company and a `pro`
-somewhere else, and today's schema cannot say that either.
+Every multi-organization design is a bet that membership resolution is correct
+everywhere, permanently, including in tables not yet written. Declining to make
+that bet is stronger than winning it.
 
-#### The active organization is a filter, never a boundary
+There is also an argument that single-tenant is simply *truer*: a side business
+is a different legal entity, with its own licensing, insurance, and tax
+treatment. One login spanning both models them as the same thing when they are
+not.
 
-The single most dangerous mistake available here.
+#### What this preserves
 
-A user who belongs to several organizations needs a notion of which one they are
-currently looking at. That selection is **UI state**. It must never appear in a
-security decision.
+Every subcontractor case still works, because collaboration is org-to-org and
+does not require anyone to join anyone else's organization:
 
-- **Correct:** policies check *set membership* — "is this row's organization one
-  I am a member of" — resolved server-side from `organization_members`.
-- **Wrong:** policies check "equals the organization the client says it is
-  viewing." A client that lies about its active organization then reads another
-  tenant's data.
+- a plumbing company subcontracted onto a GC's project
+- that company's owner seeing the GC's job from their own login
+- a seat at that company seeing the same job through their existing membership
+- a solo trade — an organization of one — subcontracted on
 
-Concretely, `current_user_organization_id()` becomes
-`current_user_organization_ids()` returning a set, and org-scoped policies move
-from `organization_id = current_user_organization_id()` to
-`organization_id = any(current_user_organization_ids())`. The active
-organization narrows what is *displayed*; it never widens what is *reachable*.
+#### What this costs
 
-This is a fail-open shape (§2.1) and belongs in the adversarial tests before any
-of it is written: a member of orgs A and B, claiming to be viewing org C, must
-read nothing from C.
+One human cannot be a seat at one organization and an owner of another under a
+single login. They need two accounts with two email addresses.
+
+#### What would reopen this
+
+The moonlighting seat is the *occasional* case and two accounts is tolerable
+there. The case that will press hardest is a contractor running **two LLCs they
+own and operate daily** — switching by logging out is genuinely poor.
+
+Reopen if that becomes a real, repeated complaint from actual customers rather
+than a hypothetical. Adding membership later is a migration touching every
+policy, and is worth doing properly at that point instead of carrying the risk
+now for a case that may never arrive.
 
 ### Multi-business owners (case 4)
 
-Solved by the same `organization_members` separation above — a GC running two
-LLCs holds an `owner` membership in each. No additional mechanism.
-
-It is worth keeping distinct from subcontractor access conceptually, because
-conflating "I own two companies" with "I'm working your job this month" is what
-made this feel intractable. They are different relationships and stay different
-rows: membership versus collaboration. But they share one prerequisite, which is
-that identity stops being welded to a single organization.
+Handled by the decision above: two organizations, two accounts. Listed in §1 as
+a case the current model cannot express, and it remains one — deliberately, per
+the reasoning and reopen conditions above.
 
 ---
 
@@ -316,10 +321,10 @@ Illustrative, not final.
 create policy "projects_boundary" on projects
   as restrictive for all to authenticated
   using (
-    organization_id = any(current_user_organization_ids())
+    organization_id = current_user_organization_id()
     or exists (select 1 from project_collaborations
                where project_id = projects.id
-                 and collaborator_org_id = any(current_user_organization_ids())
+                 and collaborator_org_id = current_user_organization_id()
                  and accepted_at is not null
                  and revoked_at is null)
   );
@@ -327,8 +332,8 @@ create policy "projects_boundary" on projects
 -- Grants operate only inside it.
 create policy "projects_org_contractors" on projects
   for all to authenticated
-  using (organization_id = any(current_user_organization_ids())
-         and current_user_is_contractor_in(organization_id));
+  using (organization_id = current_user_organization_id()
+         and current_user_is_contractor());
 ```
 
 Money-bearing tables get a restrictive policy requiring either `owner`, or a
@@ -372,11 +377,6 @@ margins will eventually cause a real commercial problem for a customer.
 
 ## 7. Sequence
 
-0. Separate identity from membership (`organization_members`), including the
-   set-membership policy change and the adversarial test that a user cannot
-   read an organization they merely *claim* to be viewing. Everything else
-   assumes this, and retrofitting it later means touching every policy a
-   second time.
 1. Settle A and B.
 2. Write the adversarial RLS tests (§2.5) — they will fail.
 3. Add restrictive boundary policies to existing tables. No behaviour change for
