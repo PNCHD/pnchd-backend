@@ -374,6 +374,53 @@ This is a permission split, not a role split. Two distinct capabilities:
 A sub can never mark their own work accepted. That is the entire point of a
 punchlist.
 
+### 5.2a Punch requests
+
+Working name for a sub's response to a punch item: a **punch request** —
+deliberately echoing a pull request. Proposed by whoever did the work, approved
+or sent back by someone with authority, and permanent either way.
+
+**Not believed to be established industry vocabulary.** The adjacent standard
+terms are *punch list* and *punch item* (universal), *submittal* (real, but means
+shop drawings and product data approved before work), and *RFI*. The act of a sub
+saying "I fixed it" appears to have no strong standard name. Confirm with someone
+in the trade that "punch request" reads as natural rather than as software
+jargon.
+
+The analogy carries further than the name. A pull request cannot merge until its
+required checks pass; a punch request cannot be submitted until the evidence the
+GC demanded is attached.
+
+**Required evidence is a setting.** The GC or PM can require a photo, a video,
+or either, before a punch request may be submitted.
+
+- Set at project level, overridable per item — some items genuinely need video
+  (a running system, a drain test) where most need a photo.
+- **Enforced server-side.** A disabled button is not enforcement. The insert must
+  be rejected if the required media is absent, or the requirement is decorative.
+
+**Assignment is to an organization; submission is by a person.** A punch item
+assigned to a sub company is assigned to the *organization* — but the person who
+submits is a profile in *their* org, not the GC's. Same shape as a ticket
+assigned to a team and picked up by whoever is on shift. This is exactly gap G3,
+and punch requests make it blocking rather than theoretical.
+
+### 5.2b Field staff and sub companies are different entities
+
+Stated plainly because the two are easy to conflate:
+
+| | Field staff | Sub company |
+|---|---|---|
+| What it is | a **person** (`profiles` row) | an **organization** (`organizations` row) |
+| Lives | inside the contractor's org | its own org |
+| Connected via | `project_assignments` | `project_collaborations` |
+| Account cost | free | pays its own subscription |
+| Bills the contractor | privately, outside the app | through the app, org → org |
+| Has its own crew | no — they *are* the crew | yes, its own profiles |
+
+Two separate paths into a project, and the choice between them decides whether
+any money touches the platform.
+
 ### 5.3 Visibility must be obvious, not buried
 
 The controls for what clients and subs can see on a project must be **immediately
