@@ -556,6 +556,127 @@ Deno.test("line_items: the polymorphic parent must actually exist", async () => 
   assert(error !== null, "wrote a line item pointing at a nonexistent parent");
 });
 
+/**
+ * Deactivation. profiles.is_active existed from migration 001 and was
+ * referenced by no policy until 20260819215510 — deactivating a user revoked
+ * nothing. These assert it now actually does.
+ */
+Deno.test("deactivation: an active seat can read org data (control)", async () => {
+  const { count, errorCode } = await readable(fixture.orgA.users.pro.client, "projects");
+  assertEquals(errorCode, null);
+  assert(count >= 0);
+});
+
+Deno.test("deactivation: a deactivated seat loses access to everything", async () => {
+  const pro = fixture.orgA.users.pro;
+
+  await admin.from("profiles").update({ is_active: false }).eq("id", pro.id);
+
+  try {
+    // The session is still valid — deactivation must be enforced by the
+    // database, not by the client forgetting its token.
+    for (const table of ["projects", "invoices", "proposals", "documents"]) {
+      const { count } = await readable(pro.client, table);
+      assertEquals(count, 0, `deactivated seat still read ${table}`);
+    }
+
+    // And cannot write.
+    const { error } = await pro.client
+      .from("projects")
+      .insert({
+        organization_id: fixture.orgA.id,
+        created_by: pro.id,
+        title: "Written while deactivated",
+      })
+      .select("id");
+    assert(error !== null, "deactivated seat created a project");
+  } finally {
+    await admin.from("profiles").update({ is_active: true }).eq("id", pro.id);
+  }
+});
+
+Deno.test("deactivation: a deactivated client cannot read their own invoices", async () => {
+  // Guards the sidestep: client policies compare client_id = auth.uid()
+  // directly and never call the current_user_* helpers, so only a restrictive
+  // policy catches this.
+  const client = fixture.orgA.users.client;
+
+  await admin.from("invoices").insert({
+    organization_id: fixture.orgA.id,
+    client_id: client.id,
+    title: "Visible while active",
+    subtotal_cents: 1000,
+    total_cents: 1000,
+    status: "sent",
+  });
+
+  const before = await readable(client.client, "invoices");
+  assert(before.count > 0, "control failed — client saw nothing while active");
+
+  await admin.from("profiles").update({ is_active: false }).eq("id", client.id);
+  try {
+    const after = await readable(client.client, "invoices");
+    assertEquals(after.count, 0, "deactivated client still read their invoices");
+  } finally {
+    await admin.from("profiles").update({ is_active: true }).eq("id", client.id);
+  }
+});
+
+Deno.test("deactivation: a deactivated platform_admin loses the bypass", async () => {
+  const platformAdmin = fixture.orgA.users.admin;
+
+  await admin.from("profiles").update({ is_active: false }).eq("id", platformAdmin.id);
+  try {
+    const { count } = await readable(platformAdmin.client, "organizations");
+    assertEquals(count, 0, "deactivated admin kept the bypass");
+  } finally {
+    await admin.from("profiles").update({ is_active: true }).eq("id", platformAdmin.id);
+  }
+});
+
+Deno.test("assignment: removing field staff from a job revokes that project", async () => {
+  const driver = fixture.orgA.users.driver;
+
+  const { data: project } = await admin
+    .from("projects")
+    .insert({
+      organization_id: fixture.orgA.id,
+      created_by: fixture.orgA.users.owner.id,
+      title: "Assigned then removed",
+    })
+    .select("id")
+    .single();
+
+  const { data: assignment } = await admin
+    .from("project_assignments")
+    .insert({
+      project_id: project!.id,
+      profile_id: driver.id,
+      organization_id: fixture.orgA.id,
+      is_active: true,
+    })
+    .select("id")
+    .single();
+
+  const visible = await driver.client
+    .from("projects")
+    .select("id")
+    .eq("id", project!.id);
+  assertEquals(visible.data?.length, 1, "assigned field staff could not see the job");
+
+  // Job ends — deactivate the assignment rather than deleting the account.
+  await admin
+    .from("project_assignments")
+    .update({ is_active: false })
+    .eq("id", assignment!.id);
+
+  const after = await driver.client
+    .from("projects")
+    .select("id")
+    .eq("id", project!.id);
+  assertEquals(after.data?.length, 0, "removed field staff still saw the job");
+});
+
 Deno.test("teardown", async () => {
   await fixture.cleanup();
 });

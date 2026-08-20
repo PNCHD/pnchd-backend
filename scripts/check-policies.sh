@@ -20,20 +20,35 @@ report() {
   { printf '\n  %s\n' "$1"; shift; printf '    %s\n' "$@"; } >> "$FINDINGS"
 }
 
-# --- 1. Inline profiles subqueries inside policies ---------------------------
+# --- 1. Inline profiles subqueries inside POLICY bodies ----------------------
 # On `profiles` this recurses through the table's own policy (42P17), which
 # cascades to every table whose policy reads profiles — all of them.
-for file in "$MIGRATIONS"/*.sql; do
-  name=$(basename "$file")
-  [[ "$name" < "$FIX_MIGRATION" || "$name" == "$FIX_MIGRATION"* ]] && continue
-  # Strip SQL comments first — migrations legitimately quote the broken pattern
-  # when documenting why it was removed.
-  if sed 's/--.*$//' "$file" | grep -q "from profiles where id = auth.uid()"; then
-    report "Inline 'from profiles where id = auth.uid()' in $name" \
-      "Causes 42P17 infinite recursion. Use current_user_organization_id()," \
-      "current_user_role(), current_user_is_admin(), or current_user_is_contractor()."
-  fi
-done
+#
+# Scans policy bodies only. The same subquery inside a SECURITY DEFINER function
+# is the correct idiom — that is precisely how current_user_role() and friends
+# break the cycle — so matching the whole file produces false positives.
+while read -r finding; do
+  [ -z "$finding" ] && continue
+  report "Inline profiles subquery in policy: $finding" \
+    "Causes 42P17 infinite recursion. Use current_user_organization_id()," \
+    "current_user_role(), current_user_is_admin(), or current_user_is_contractor()."
+done < <(
+  for file in "$MIGRATIONS"/*.sql; do
+    name=$(basename "$file")
+    [[ "$name" < "$FIX_MIGRATION" || "$name" == "$FIX_MIGRATION"* ]] && continue
+    sed 's/--.*$//' "$file" | awk -v f="$name" '
+      /^create policy/ { body = ""; capturing = 1; pname = $0 }
+      capturing        { body = body " " $0 }
+      /;[[:space:]]*$/ {
+        if (capturing && body ~ /from profiles where id = auth\.uid\(\)/) {
+          gsub(/^create policy |"/, "", pname)
+          print pname " (" f ")"
+        }
+        capturing = 0
+      }
+    '
+  done
+)
 
 # --- 2. Tables created without RLS enabled -----------------------------------
 while read -r table; do
