@@ -18,6 +18,11 @@ mobile, React web dashboard, Supabase backend.
 
 `docs/ARCHITECTURE.docx` is the superseded v2.0. Reference only, not maintained.
 
+**Every architectural decision is closed.** Next session is building, not
+deciding — see "Where things stand" at the end of this file for the ordered
+work. Highest value is the punchlist, which is the feature the app is named
+after. Lowest friction is mobile proposals/invoices, which needs no decisions.
+
 ## The one thing to understand before touching the database
 
 **Four security bugs have shipped in this project. All four were invisible to a
